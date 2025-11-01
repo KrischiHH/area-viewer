@@ -1,0 +1,2 @@
+/surface-ar/*
+  Permissions-Policy: xr-spatial-tracking=(self), camera=(self)
