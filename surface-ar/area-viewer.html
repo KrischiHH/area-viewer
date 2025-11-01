@@ -1,91 +1,25 @@
 <!doctype html>
 <html lang="de">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <title>ARea – Guided AR Viewer</title>
-  <meta name="theme-color" content="#0b1323" />
-
-  <!-- Social link preview (statisch – ideal: pro Szene eine eigene HTML-Seite rendern) -->
-  <meta property="og:type" content="website">
-  <meta property="og:title" content="ARea AR Experience">
-  <meta property="og:description" content="Tippe auf OK und platziere das 3D-Objekt in deiner Umgebung.">
-  <meta property="og:image" content="poster.jpg">
-  <meta property="twitter:card" content="summary_large_image">
-  <meta property="twitter:title" content="ARea AR Experience">
-  <meta property="twitter:description" content="Tippe auf OK und platziere das 3D-Objekt in deiner Umgebung.">
-  <meta property="twitter:image" content="poster.jpg">
-
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
+  <title>ARea – AR Viewer (Animation)</title>
   <style>
-    :root{
-      --bg:#0b1323; --panel:#0f1626; --text:#e9eefb; --muted:#a7b4d6; --border:#1f2940;
-      --accent:#7aa2ff; --accent2:#5eead4; --danger:#ef4444;
-    }
-    *{box-sizing:border-box}
-    html,body{margin:0;height:100%;background:#000;color:var(--text);font:14px/1.45 system-ui, Segoe UI, Inter, Roboto, Arial, sans-serif}
-    canvas{display:block}
-
-    /* DOM Overlay Root for WebXR */
-    #overlayRoot{position:fixed; inset:0; pointer-events:none; z-index:10;}
-
-    /* Preflight (Poster) */
-    #preflight{position:absolute; inset:0; display:grid; place-items:center; padding:24px; pointer-events:auto;}
-    #preflightCard{
-      width:min(720px,92vw); border:1px solid var(--border); border-radius:16px; overflow:hidden;
-      background:color-mix(in srgb, var(--panel) 82%, transparent);
-      box-shadow:0 18px 48px rgba(0,0,0,.5);
-      backdrop-filter:saturate(1.1) blur(8px);
-    }
-    .poster{width:100%; display:block; background:#000; object-fit:cover; aspect-ratio:16/9}
-    .pbody{padding:14px 14px 16px}
-    .eyebrow{font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:.12em}
-    .title{font-weight:800; font-size:18px; margin:4px 0}
-    .desc{color:var(--muted)}
-    .prow{display:flex; gap:10px; justify-content:flex-end; margin-top:12px}
-    .btn{background:var(--panel); border:1px solid var(--border); color:var(--text); padding:10px 12px; border-radius:12px; cursor:pointer; font-weight:800}
-    .btn:hover{border-color:var(--accent)}
-    .btn.primary{background:linear-gradient(180deg, color-mix(in srgb, var(--panel) 78%, var(--accent) 22%), color-mix(in srgb, var(--panel) 85%, var(--accent2) 15%));}
-
-    /* Bottom HUD (nur Android/WebXR) */
-    #hud{position:absolute; left:0; right:0; bottom:calc(env(safe-area-inset-bottom)); padding:10px; display:flex; justify-content:center; pointer-events:auto}
-    #hud .bar{display:flex; gap:8px; padding:8px; border:1px solid var(--border); border-radius:999px; background:color-mix(in srgb, var(--panel) 86%, transparent); box-shadow:0 10px 24px rgba(0,0,0,.35)}
-    .iconbtn{display:inline-flex; align-items:center; gap:8px; padding:10px 12px; border-radius:999px; border:1px solid var(--border); background:color-mix(in srgb, var(--panel) 92%, transparent); color:var(--text); font-weight:800; cursor:pointer}
-    .iconbtn[hidden]{display:none}
-    .iconbtn:hover{border-color:var(--accent)}
-    .iconbtn .ico{width:16px; height:16px; background:currentColor; -webkit-mask:var(--m) no-repeat center/contain; mask:var(--m) no-repeat center/contain}
-    .danger{border-color:#6b1a1a; color:#ffdede}
-
-    /* Small status pill (top-right) */
-    #status{position:absolute; top:12px; right:12px; pointer-events:none; background:color-mix(in srgb, var(--panel) 85%, transparent); border:1px solid var(--border); color:var(--muted); border-radius:12px; padding:6px 10px; font-size:12px}
-
-    /* Tiny toast */
-    #toast{position:fixed; right:12px; bottom:12px; background:color-mix(in srgb, var(--panel) 92%, transparent); border:1px solid var(--border); border-radius:10px; padding:10px 12px; display:none; z-index:9999}
-
-    /* Diagnose-Overlay (immer sichtbar über allem) */
-    #diag{ position:fixed; inset:0; display:none; place-items:center; padding:20px; background:rgba(0,0,0,.45); backdrop-filter:blur(4px); pointer-events:auto; z-index:99999; }
-    #diagCard{ max-width:min(720px,92vw); border:1px solid var(--border); border-radius:14px; background:color-mix(in srgb, var(--panel) 90%, transparent); padding:14px; }
-    #diag h3{margin:0 0 6px 0}
-    #diag pre{white-space:pre-wrap; color:var(--muted)}
-
-    /* Hide if not needed */
-    [hidden]{display:none !important}
+    :root{ color-scheme:dark }
+    html,body{ margin:0; height:100%; background:#000; color:#e9eefb; font:14px/1.45 system-ui,Segoe UI,Inter,Roboto,Arial }
+    canvas{ display:block }
+    #hud{ position:fixed; left:12px; bottom:12px; display:flex; gap:8px; z-index:5;
+          background: color-mix(in srgb, #0f1626 88%, transparent);
+          border:1px solid #22314d; padding:6px; border-radius:12px; backdrop-filter: blur(6px); }
+    #hud button{ all:unset; cursor:pointer; color:#fff; padding:8px 12px; border-radius:10px; border:1px solid #22314d; background:#0f1626 }
+    #hud button:hover{ border-color:#6ea8ff }
+    #badge{ position:fixed; right:12px; top:12px; z-index:8; background:#0b1220; color:#9cf; padding:6px 8px; border-radius:8px; font:12px system-ui }
+    #err{ position:fixed; left:12px; top:12px; z-index:9; background:#b00020; color:#fff; padding:8px 10px; border-radius:8px; display:none;
+          font:12px/1.35 monospace; max-width:min(92vw,680px); white-space:pre-wrap }
+    #enter{ position:fixed; left:50%; top:50%; transform:translate(-50%,-50%); z-index:6;
+            padding:12px 18px; border-radius:12px; border:1px solid #22314d; background:#0f1626; color:#fff; }
+    #native{ position:fixed; left:12px; top:12px; z-index:7; padding:8px 12px; border-radius:10px; border:1px solid #22314d; background:#0f1626; color:#fff; display:none }
   </style>
-
-  <!-- ImportMap/ESM Check (In-App-Browser Warnung) -->
-  <script>
-  (function(){
-    try{
-      var supportsImportMap = typeof HTMLScriptElement !== 'undefined' && 'supports' in HTMLScriptElement && HTMLScriptElement.supports('importmap');
-      var supportsModule = !!('noModule' in HTMLScriptElement.prototype);
-      if (!supportsImportMap || !supportsModule){
-        var n = document.createElement('div');
-        n.style.cssText = 'position:fixed;inset:0;padding:16px;background:#0b1323;color:#fff;z-index:100000;font-family:system-ui,Arial,sans-serif';
-        n.innerHTML = '<h3>Browser nicht kompatibel</h3><p>Bitte in Chrome/Edge (Android) oder Safari (iOS) öffnen. In-App-Browser (WhatsApp/Instagram) sind nicht unterstützt.</p>';
-        document.body.appendChild(n);
-      }
-    }catch(_){}
-  })();
-  </script>
 
   <script type="importmap">
   {
@@ -97,478 +31,364 @@
   </script>
 </head>
 <body>
-  <!-- WebGL canvas wird von THREE erzeugt -->
-  <div id="overlayRoot">
-    <!-- Poster -->
-    <div id="preflight">
-      <div id="preflightCard">
-        <img id="poster" class="poster" alt="Poster" />
-        <div class="pbody">
-          <div id="eyebrow" class="eyebrow">ARea – Szene</div>
-          <div id="title" class="title">Titel der Szene</div>
-          <div id="desc" class="desc">Klicke auf OK. Die Kamera startet und die Fläche wird erkannt. Danach blendet die Karte weich aus.</div>
-          <div class="prow">
-            <button id="btn-open-native" class="btn" hidden>In AR (nativ) öffnen</button>
-            <button id="btn-start" class="btn primary">OK</button>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- HUD (nur Android/WebXR sichtbar) -->
-    <div id="hud" hidden>
-      <div class="bar">
-        <button id="btn-place" class="iconbtn" title="Platzieren">
-          <span class="ico" style="--m:url('data:image/svg+xml,%3Csvg viewBox=%220 0 24 24%22 xmlns=%22http://www.w3.org/2000/svg%22%3E%3Cpath d=%22M12 2l7 4v6c0 5-7 10-7 10S5 17 5 12V6l7-4z%22 fill=%22%23fff%22/%3E%3C/svg%3E')"></span>Platzieren
-        </button>
-        <button id="btn-reset" class="iconbtn" title="Neu ausrichten">
-          <span class="ico" style="--m:url('data:image/svg+xml,%3Csvg viewBox=%220 0 24 24%22 xmlns=%22http://www.w3.org/2000/svg%22%3E%3Cpath d=%22M12 5V1L7 6l5 5V7c3.309 0 6 2.691 6 6a6 6 0 11-6-6z%22 fill=%22%23fff%22/%3E%3C/svg%3E')"></span>Reset
-        </button>
-        <button id="btn-rot-l" class="iconbtn" title="Drehen -15°"><span class="ico" style="--m:url('data:image/svg+xml,%3Csvg viewBox=%220 0 24 24%22 xmlns=%22http://www.w3.org/2000/svg%22%3E%3Cpath d=%22M12 2a10 10 0 1010 10h-2a8 8 0 11-8-8V2zM11 6v6l5 3%22 stroke=%22%23fff%22 stroke-width=%222%22 fill=%22none%22/%3E%3C/svg%3E')"></span></button>
-        <button id="btn-rot-r" class="iconbtn" title="Drehen +15°"><span class="ico" style="--m:url('data:image/svg+xml,%3Csvg viewBox=%220 0 24 24%22 xmlns=%22http://www.w3.org/2000/svg%22%3E%3Cpath d=%22M12 2a10 10 0 1010 10h-2a8 8 0 11-8-8V2zM13 6v6l-5 3%22 stroke=%22%23fff%22 stroke-width=%222%22 fill=%22none%22/%3E%3C/svg%3E')"></span></button>
-        <button id="btn-scale-dn" class="iconbtn" title="Kleiner"><span class="ico" style="--m:url('data:image/svg+xml,%3Csvg viewBox=%220 0 24 24%22 xmlns=%22http://www.w3.org/2000/svg%22%3E%3Cpath d=%22M5 12h14%22 stroke=%22%23fff%22 stroke-width=%222%22/%3E%3C/svg%3E')"></span></button>
-        <button id="btn-scale-up" class="iconbtn" title="Größer"><span class="ico" style="--m:url('data:image/svg+xml,%3Csvg viewBox=%220 0 24 24%22 xmlns=%22http://www.w3.org/2000/svg%22%3E%3Cpath d=%22M12 5v14M5 12h14%22 stroke=%22%23fff%22 stroke-width=%222%22/%3E%3C/svg%3E')"></span></button>
-        <button id="btn-play" class="iconbtn" title="Play/Pause" hidden><span class="ico" style="--m:url('data:image/svg+xml,%3Csvg viewBox=%220 0 24 24%22 xmlns=%22http://www.w3.org/2000/svg%22%3E%3Cpath d=%22M8 5v14l11-7z%22 fill=%22%23fff%22/%3E%3C/svg%3E')"></span></button>
-        <button id="btn-mute" class="iconbtn" title="Mute" hidden><span class="ico" style="--m:url('data:image/svg+xml,%3Csvg viewBox=%220 0 24 24%22 xmlns=%22http://www.w3.org/2000/svg%22%3E%3Cpath d=%22M3 9v6h4l5 5V4L7 9H3z%22 fill=%22%23fff%22/%3E%3C/svg%3E')"></span></button>
-      </div>
-    </div>
-
-    <div id="status">Warte auf AR…</div>
+  <div id="err"></div>
+  <button id="enter">AR starten</button>
+  <button id="native">In AR (nativ) öffnen</button>
+  <div id="badge">AR‑Animation</div>
+  <div id="hud" style="display:none">
+    <button id="btnRepose">Neu platzieren</button>
+    <button id="btnPlay" style="display:none">Play/Pause</button>
+    <button id="btnMute" style="display:none">Ton</button>
   </div>
 
-  <!-- Diagnose-Overlay -->
-  <div id="diag">
-    <div id="diagCard">
-      <h3 id="diagTitle">Hinweis</h3>
-      <pre id="diagMsg"></pre>
-      <div style="display:flex; gap:8px; margin-top:8px">
-        <a id="diagNative" class="btn" href="#" hidden>In AR (nativ) öffnen</a>
-        <button class="btn" onclick="document.getElementById('diag').style.display='none'">Schließen</button>
-      </div>
-    </div>
-  </div>
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader }  from 'three/addons/loaders/GLTFLoader.js';
+import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 
-  <div id="toast"></div>
+const qs = new URLSearchParams(location.search);
+const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform==='MacIntel' && navigator.maxTouchPoints>1);
 
-  <script type="module">
-    import * as THREE from 'three';
-    import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-    import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
+const showErr = (m)=>{ const el=document.getElementById('err'); el.textContent=m; el.style.display='block'; console.error(m); };
 
-    // ---------- tiny utils ----------
-    const $ = sel => document.querySelector(sel);
-    function toast(msg){ const t=$('#toast'); t.textContent=msg; t.style.display='block'; setTimeout(()=>t.style.display='none',1800); }
-    function qs(key){ return new URL(location.href).searchParams.get(key); }
-    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+function resolveRel(u, base){
+  if (!u) return '';
+  if (/^https?:|^data:|^blob:/.test(u)) return u;
+  try { return new URL(u, base).href; } catch { return u; }
+}
 
-    function showDiag(title, msg, nativeHref=null){
-      $('#diagTitle').textContent = title||'Hinweis';
-      $('#diagMsg').textContent = msg||'';
-      const a = $('#diagNative');
-      if (nativeHref){ a.href = nativeHref; a.hidden = false; } else { a.hidden = true; }
-      $('#diag').style.display = 'grid';
-    }
-
-    // -------- Robustes Config-Loading ----------
-    async function loadConfig(){
-      const src = qs('src');
-      if (src){
-        if (src.startsWith('data:')){
-          const after = src.split(',')[1] || '';
-          if (src.includes(';base64,')){
-            const bin = atob(after);
-            const bytes = Uint8Array.from(bin, c => c.charCodeAt(0));
-            const text = new TextDecoder('utf-8').decode(bytes);
-            const json = JSON.parse(text);
-            return json;
-          } else {
-            const text = decodeURIComponent(after);
-            return JSON.parse(text);
-          }
-        } else if (/^https?:\/\//.test(src)){
-          const res = await fetch(src, { cache:'no-store' });
-          if (!res.ok) throw new Error('src-URL nicht erreichbar');
-          const json = await res.json();
-          try{
-            const u = new URL(src, location.href);
-            if (u.pathname.endsWith('/scene.json')) {
-              json.__base = u.origin + u.pathname.replace(/\/scene\.json$/, '');
-            }
-          }catch(_){}
-          return json;
-        } else {
-          const text = decodeURIComponent(src);
-          return JSON.parse(text);
-        }
-      }
-      const id = qs('scene') || qs('id');
-      const base = (qs('base') || 'https://area-publish.area-webar.workers.dev').replace(/\/$/,'');
-      if (!id) throw new Error('Kein scene oder src angegeben');
-      const root = `${base}/scenes/${encodeURIComponent(id)}`;
-      const res = await fetch(`${root}/scene.json`, { cache:'no-store' });
-      if (!res.ok) throw new Error('scene.json nicht gefunden');
-      const json = await res.json();
-      json.__base = root;
-      return json;
-    }
-
-    function resolveUrl(maybeRel, cfg){
-      if (!maybeRel) return '';
-      if (/^https?:|^data:|^blob:/.test(maybeRel)) return maybeRel;
-      const b = (cfg.__base || '').replace(/\/$/,'');
-      return b ? `${b}/${maybeRel.replace(/^\//,'')}` : maybeRel;
-    }
-
-    // -------- Normalisierung Editor → Guided ----------
-    function normalizeCfg(cfg){
-      cfg.ui = cfg.ui || {};
-      cfg.ui.welcome = cfg.ui.welcome || {};
-      cfg.model = cfg.model || {};
-      cfg.audio = cfg.audio || {};
-      cfg.meta  = cfg.meta  || {};
-
-      // Poster-Fallback
-      if (!cfg.ui.welcome.poster && cfg.target?.previewUrl) {
-        cfg.ui.welcome.poster = cfg.target.previewUrl;
-      }
-
-      // Audio: src → url
-      if (cfg.audio.src && !cfg.audio.url) cfg.audio.url = cfg.audio.src;
-      if (cfg.audio.autoplay == null) cfg.audio.autoplay = 'withAnimation';
-
-      // Animation: model.animation → cfg.animation.clipName/Start/Loop
-      cfg.animation = cfg.animation || {};
-      if (cfg.animation.clipName == null && cfg.model.animation != null) {
-        const a = cfg.model.animation;
-        if (a === 'none'){ cfg.animation.clipName = null; cfg.animation.start='none'; cfg.animation.loop=false; }
-        else if (a === '*' || a === ''){ cfg.animation.clipName='*'; }
-        else { cfg.animation.clipName=a; }
-      }
-      if (!cfg.animation.start) cfg.animation.start = 'onPlace'; // Default: nach Platzierung
-      if (cfg.animation.loop == null) cfg.animation.loop = true;
-
-      // Titel/Desc Defaults
-      if (!cfg.ui.welcome.title) cfg.ui.welcome.title = cfg.meta.title || 'Scene';
-      if (!cfg.ui.welcome.eyebrow) cfg.ui.welcome.eyebrow = 'ARea – Szene';
-      if (!cfg.ui.welcome.desc) cfg.ui.welcome.desc = 'Erlaube Kamera & bewege das Gerät zum Erkennen der Oberfläche.';
-    }
-
-    // ---------- THREE setup ----------
-    const renderer = new THREE.WebGLRenderer({ antialias:true, alpha:true, preserveDrawingBuffer:false, powerPreference:'high-performance' });
-    renderer.setPixelRatio(Math.min(devicePixelRatio||1, 2));
-    renderer.setSize(innerWidth, innerHeight);
-    renderer.outputColorSpace = THREE.SRGBColorSpace; // three r160+
-    renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.1;
-    document.body.prepend(renderer.domElement);
-
-    const scene = new THREE.Scene();
-    const camera = new THREE.PerspectiveCamera(50, innerWidth/innerHeight, 0.01, 50);
-    const light = new THREE.HemisphereLight(0xffffff, 0x334466, 1.2); scene.add(light);
-    const dir   = new THREE.DirectionalLight(0xffffff, 1.8); dir.position.set(0,3,1); scene.add(dir);
-
-    window.addEventListener('resize', ()=>{
-      renderer.setSize(innerWidth, innerHeight);
-      camera.aspect = innerWidth/innerHeight; camera.updateProjectionMatrix();
-    });
-
-    // Reticle
-    const reticle = new THREE.Mesh(
-      new THREE.RingGeometry(0.09, 0.1, 48).rotateX(-Math.PI/2),
-      new THREE.MeshBasicMaterial({ color:0x88ccff, transparent:true, opacity:0.9 })
-    );
-    reticle.matrixAutoUpdate = false;
-    reticle.visible = false;
-    scene.add(reticle);
-
-    // Platzierungs-Rahmen (flaches Quadrat)
-    const frame = new THREE.LineSegments(
-      new THREE.EdgesGeometry(new THREE.PlaneGeometry(0.4, 0.4).rotateX(-Math.PI/2)),
-      new THREE.LineBasicMaterial({ color:0xffffff, transparent:true, opacity:0.5 })
-    );
-    frame.visible = false;
-    scene.add(frame);
-
-    // Model state
-    let model = null;            // THREE.Group
-    let previewModel = null;     // halbtransparent bis zur Platzierung
-    let mixer = null;            // AnimationMixer
-    let audio = null;            // THREE.Audio
-    let audioMuted = false;
-    let placed = false;          // wurde platziert?
-    let baseScale = 1;
-
-    const loader = new GLTFLoader();
-    const draco = new DRACOLoader(); draco.setDecoderPath('https://www.gstatic.com/draco/v1/decoders/');
-    loader.setDRACOLoader(draco);
-
-    // Animation helpers
-    function startAnimation(cfg){
-      if (!mixer || !model) return;
-      const clips = model.animations || [];
-      if (!clips.length) return;
-
-      let clip = null;
-      const want = cfg.animation?.clipName;
-      if (want && want !== '*' && want !== 'none'){
-        clip = clips.find(c=>c.name===want) || clips[0];
-      } else if (want === 'none') {
-        return;
+// -------- Config laden (scene/base oder src) ----------
+async function loadConfig(){
+  const src = qs.get('src');
+  if (src){
+    if (src.startsWith('data:')){
+      const after = src.split(',')[1] || '';
+      if (src.includes(';base64,')){
+        const bin = atob(after);
+        const bytes = Uint8Array.from(bin, c => c.charCodeAt(0));
+        const text = new TextDecoder('utf-8').decode(bytes);
+        const json = JSON.parse(text);
+        return json;
       } else {
-        clip = clips[0];
+        return JSON.parse(decodeURIComponent(after));
       }
-      const act = mixer.clipAction(clip);
-      const loop = cfg.animation?.loop !== false;
-      act.setLoop(loop ? THREE.LoopRepeat : THREE.LoopOnce, loop ? (cfg.animation?.iterations||9999) : 0);
-      act.clampWhenFinished = true;
-      act.reset().play();
-      mixer.timeScale = 1;
-
-      if (cfg.audio?.autoplay === 'withAnimation' && audio && audio.buffer && !audio.isPlaying) {
-        try { audio.play(); } catch(_) {}
-      }
-    }
-
-    // AR session / hit-test
-    let xrSession = null, refSpace = null, viewerSpace = null, hitTestSource = null;
-
-    async function startXR(cfg){
-      if (!navigator.xr) throw new Error('WebXR wird in diesem Browser nicht unterstützt.');
-      const supported = await navigator.xr.isSessionSupported('immersive-ar');
-      if (!supported) throw new Error('AR-Session wird auf diesem Gerät/Browser nicht unterstützt.');
-
-      const overlayRoot = document.getElementById('overlayRoot');
-      let sess = null;
-      const sessionInit = { requiredFeatures:['hit-test'], optionalFeatures:['dom-overlay'], domOverlay:{ root: overlayRoot } };
-
+    } else if (/^https?:\/\//.test(src)){
+      const r = await fetch(src, { cache:'no-store' });
+      if (!r.ok) throw new Error('src-URL nicht erreichbar');
+      const j = await r.json();
       try{
-        sess = await navigator.xr.requestSession('immersive-ar', sessionInit);
-      }catch(e){
-        // Fallback ohne dom-overlay
-        sess = await navigator.xr.requestSession('immersive-ar', { requiredFeatures:['hit-test'] });
+        const u = new URL(src, location.href);
+        if (u.pathname.endsWith('/scene.json')){
+          j.__base = u.origin + u.pathname.replace(/\/scene\.json$/, '');
+        }
+      }catch{}
+      return j;
+    } else {
+      return JSON.parse(decodeURIComponent(src));
+    }
+  }
+  const id   = qs.get('scene') || qs.get('id');
+  const base = (qs.get('base') || 'https://area-publish.area-webar.workers.dev').replace(/\/$/,'');
+  if (!id) throw new Error('Kein scene oder src angegeben');
+  const root = `${base}/scenes/${encodeURIComponent(id)}`;
+  const r = await fetch(`${root}/scene.json`, { cache:'no-store' });
+  if (!r.ok) throw new Error('scene.json nicht gefunden');
+  const j = await r.json();
+  j.__base = root;
+  return j;
+}
+
+function normalizeCfg(cfg){
+  cfg.model = cfg.model || {};
+  cfg.audio = cfg.audio || {};
+  cfg.meta  = cfg.meta  || {};
+  cfg.animation = cfg.animation || {};
+
+  // Legacy → neue Felder
+  if (cfg.audio.src && !cfg.audio.url) cfg.audio.url = cfg.audio.src;
+  if (cfg.audio.autoplay == null) cfg.audio.autoplay = 'withAnimation';
+
+  if (cfg.animation.clipName == null && cfg.model.animation != null) {
+    const a = cfg.model.animation;
+    if (a === 'none'){ cfg.animation.clipName = null; cfg.animation.start='none'; cfg.animation.loop=false; }
+    else if (a === '*' || a === ''){ cfg.animation.clipName='*'; }
+    else { cfg.animation.clipName=a; }
+  }
+  if (!cfg.animation.start) cfg.animation.start = 'onPlace'; // Standard im AR-Kontext
+  if (cfg.animation.loop == null) cfg.animation.loop = true;
+  // optional: iterations
+  if (cfg.animation.iterations == null) cfg.animation.iterations = 9999;
+}
+
+function buildNativeLink(cfg){
+  const base = (cfg.__base||'');
+  const glb  = resolveRel(cfg.model?.url||'scene.glb', cfg);
+  const usdz = resolveRel(cfg.model?.usdzUrl||'', cfg);
+  const ua = navigator.userAgent || '';
+  const isiOSUA = /iPhone|iPad|iPod/.test(ua) || (navigator.platform==='MacIntel' && navigator.maxTouchPoints>1);
+  if (isiOSUA && usdz) return usdz; // Quick Look
+  // Android Scene Viewer Intent
+  const file = encodeURIComponent(glb);
+  const title = encodeURIComponent(cfg.meta?.title || 'ARea Model');
+  return `intent://arvr.google.com/scene-viewer/1.0?file=${file}&mode=ar_preferred&title=${title}#Intent;scheme=https;package=com.google.android.googlequicksearchbox;end;`;
+}
+
+// ---------- THREE Setup ----------
+const renderer = new THREE.WebGLRenderer({ antialias:true, alpha:true, powerPreference:'high-performance' });
+renderer.setPixelRatio(Math.min(devicePixelRatio||1, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.1;
+document.body.prepend(renderer.domElement);
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(50, innerWidth/innerHeight, 0.01, 50);
+const light = new THREE.HemisphereLight(0xffffff, 0x334466, 1.2); scene.add(light);
+const dir   = new THREE.DirectionalLight(0xffffff, 1.8); dir.position.set(0,3,1); scene.add(dir);
+
+addEventListener('resize', ()=>{
+  renderer.setSize(innerWidth, innerHeight);
+  camera.aspect = innerWidth/innerHeight; camera.updateProjectionMatrix();
+});
+
+// Reticle
+const reticle = new THREE.Mesh(
+  new THREE.RingGeometry(0.09, 0.1, 48).rotateX(-Math.PI/2),
+  new THREE.MeshBasicMaterial({ color:0x88ccff, transparent:true, opacity:0.9 })
+);
+reticle.matrixAutoUpdate = false;
+reticle.visible = false;
+scene.add(reticle);
+
+// Model + Animation
+let model=null, modelRoot=null, previewVisible=false;
+let mixer=null, audio=null, audioMuted=false;
+let placed=false;
+let baseScale=1;
+
+const loader = new GLTFLoader();
+const draco = new DRACOLoader(); draco.setDecoderPath('https://www.gstatic.com/draco/v1/decoders/');
+loader.setDRACOLoader(draco);
+
+async function loadModel(cfg){
+  const glbUrl = resolveRel(cfg.model?.url||'scene.glb', cfg);
+  const gltf = await loader.loadAsync(glbUrl);
+  const root = gltf.scene || gltf.scenes?.[0];
+
+  model = new THREE.Group(); model.name='ModelRoot'; model.add(root);
+  modelRoot = root;
+  model.visible = false;
+  scene.add(model);
+
+  baseScale = cfg.model?.scale || 1;
+  model.scale.setScalar(baseScale);
+
+  // Animationen
+  if (gltf.animations?.length){
+    model.animations = gltf.animations;
+    mixer = new THREE.AnimationMixer(modelRoot);
+  }
+
+  // Optional Audio
+  if (cfg.audio?.url){
+    const listener = new THREE.AudioListener(); camera.add(listener);
+    const sound = new THREE.Audio(listener);
+    const url = resolveRel(cfg.audio.url, cfg);
+    try{
+      const res = await fetch(url); const buff = await res.arrayBuffer();
+      const ctx = listener.context; const abuf = await ctx.decodeAudioData(buff);
+      sound.setBuffer(abuf); sound.setLoop(!!cfg.audio.loop); sound.setVolume(Number.isFinite(cfg.audio.volume)?cfg.audio.volume:0.85);
+      audio = sound; model.add(sound);
+      document.getElementById('btnMute').style.display = '';
+    }catch(e){ console.warn('Audio konnte nicht geladen werden:', e); }
+  }
+}
+
+function selectClip(cfg){
+  if (!mixer || !model?.animations?.length) return null;
+  const clips = model.animations;
+  const want  = cfg.animation?.clipName;
+
+  if (want === 'none' || want === null) return null;
+  if (want && want !== '*'){
+    return clips.find(c=>c.name===want) || clips[0] || null;
+  }
+  return clips[0] || null;
+}
+
+function playAnimation(cfg){
+  if (!mixer) return;
+  const clip = selectClip(cfg);
+  if (!clip) return;
+
+  mixer.stopAllAction();
+  const act = mixer.clipAction(clip);
+  const loopOn = cfg.animation?.loop !== false;
+  if (loopOn){
+    act.setLoop(THREE.LoopRepeat, cfg.animation?.iterations ?? 9999);
+  }else{
+    act.setLoop(THREE.LoopOnce, 0);
+    act.clampWhenFinished = true;
+  }
+  act.reset().play();
+  mixer.timeScale = 1;
+
+  if (cfg.audio?.autoplay === 'withAnimation' && audio && audio.buffer){
+    try { audio.play(); } catch(_) {}
+  }
+}
+
+function pauseAnimationAndAudio(){
+  if (mixer) mixer.timeScale = 0;
+  if (audio?.isPlaying){ try{ audio.stop(); }catch{} }
+}
+
+// ---------- WebXR ----------
+let xrSession=null, refSpace=null, viewerSpace=null, hitTestSource=null;
+
+async function requestBestRefSpace(sess){
+  const order=['local-floor','local','viewer'];
+  for (const kind of order){
+    try{ const rs = await sess.requestReferenceSpace(kind); return rs; }catch{}
+  }
+  throw new Error('Kein kompatibler ReferenceSpace verfügbar (local-floor/local/viewer)');
+}
+
+async function startXR(cfg){
+  if (!navigator.xr) throw new Error('WebXR wird in diesem Browser nicht unterstützt.');
+  const supported = await navigator.xr.isSessionSupported('immersive-ar');
+  if (!supported) throw new Error('AR-Session wird auf diesem Gerät/Browser nicht unterstützt.');
+
+  const sessionInit = { requiredFeatures:['hit-test'], optionalFeatures:['dom-overlay'], domOverlay:{ root: document.body } };
+  let sess=null;
+  try{ sess = await navigator.xr.requestSession('immersive-ar', sessionInit); }
+  catch(_){ sess = await navigator.xr.requestSession('immersive-ar', { requiredFeatures:['hit-test'] }); }
+
+  xrSession = sess;
+  renderer.xr.enabled = true;
+  await renderer.xr.setSession(sess);
+
+  refSpace   = await requestBestRefSpace(sess);
+  try{ viewerSpace = await sess.requestReferenceSpace('viewer'); }catch{ viewerSpace = refSpace; }
+  try{ hitTestSource = await sess.requestHitTestSource({ space: viewerSpace }); }
+  catch(e){ throw new Error('Hit-Test nicht verfügbar: ' + (e?.message||String(e))); }
+
+  // Platzierung: erster Tap platziert; "Neu platzieren" setzt placed=false
+  sess.addEventListener('select', ()=>{
+    if (!reticle.visible || !model) return;
+    const m = new THREE.Matrix4(); m.copy(reticle.matrix);
+    model.matrix.copy(m);
+    model.matrix.decompose(model.position, model.quaternion, model.scale);
+    model.visible = true;
+    placed = true;
+
+    // Animation starten je nach Startmodus
+    const start = (cfg.animation?.start || 'onPlace').toLowerCase();
+    if (start === 'onPlace' || start === 'onstart'){
+      // bei onStart hier sinnvollerweise ebenfalls starten (nach Platzierung)
+      playAnimation(cfg);
+    }
+    document.getElementById('hud').style.display = '';
+  });
+
+  renderer.setAnimationLoop((time, frame)=>{
+    if (!frame) return;
+
+    const dt = renderer.xr.getClock().getDelta();
+    if (mixer) mixer.update(dt);
+
+    if (hitTestSource){
+      const hits = frame.getHitTestResults(hitTestSource);
+      if (hits.length){
+        const pose = hits[0].getPose(refSpace);
+        if (pose?.transform){
+          reticle.visible = true;
+          reticle.matrix.fromArray(pose.transform.matrix);
+        }
+      }else{
+        reticle.visible = false;
       }
+    }
 
-      xrSession = sess;
-      renderer.xr.enabled = true;
-      await renderer.xr.setSession(sess);
-      refSpace = await sess.requestReferenceSpace('local');
-      viewerSpace = await sess.requestReferenceSpace('viewer');
-      hitTestSource = await sess.requestHitTestSource({ space: viewerSpace });
+    renderer.render(scene, camera);
+  });
+}
 
-      // Tap = platzieren
-      sess.addEventListener('select', ()=>{
-        if (!reticle.visible || !previewModel) return;
-        const m = new THREE.Matrix4(); m.copy(reticle.matrix);
-        model.matrix.copy(m); model.matrix.decompose(model.position, model.quaternion, model.scale);
-        placed = true; previewModel.visible = false; frame.visible = false;
-        $('#btn-place').textContent='Neu platzieren';
-        if (cfg.animation?.start === 'onPlace') startAnimation(cfg);
-      });
+// ---------- Boot ----------
+const btnEnter  = document.getElementById('enter');
+const btnNative = document.getElementById('native');
+const btnRepose = document.getElementById('btnRepose');
+const btnPlay   = document.getElementById('btnPlay');
+const btnMute   = document.getElementById('btnMute');
 
-      // Render loop
-      renderer.setAnimationLoop((time, frame)=>{
-        if (!frame) return;
-        const ht = frame.getHitTestResults(hitTestSource);
-        if (ht.length > 0){
-          const pose = ht[0].getPose(refSpace);
-          if (pose && pose.transform){
-            const m = new THREE.Matrix4().fromArray(pose.transform.matrix);
-            reticle.visible = true; reticle.matrix.copy(m);
-            frame.visible = !placed; frame.matrixAutoUpdate=false; frame.matrix.copy(m);
-            if (!placed && previewModel){
-              previewModel.visible = true;
-              previewModel.matrix.copy(m);
-              previewModel.matrix.decompose(previewModel.position, previewModel.quaternion, previewModel.scale);
-            }
-          }
+let CFG={};
+
+btnRepose.onclick = ()=>{
+  if (!model) return;
+  pauseAnimationAndAudio();
+  model.visible = false;
+  placed = false;
+};
+
+btnPlay.onclick = ()=>{
+  if (!mixer) return;
+  const ts = mixer.timeScale ?? 1;
+  if (ts === 0){
+    mixer.timeScale = 1;
+    if (CFG.audio?.autoplay === 'withAnimation' && audio && audio.buffer && !audio.isPlaying){
+      try{ audio.play(); }catch{}
+    }
+  } else {
+    mixer.timeScale = 0;
+    if (audio?.isPlaying){ try{ audio.stop(); }catch{} }
+  }
+};
+
+btnMute.onclick = ()=>{
+  if (!audio) return;
+  audioMuted = !audioMuted;
+  audio.setVolume(audioMuted ? 0 : (Number.isFinite(CFG.audio?.volume)?CFG.audio.volume:0.85));
+  btnMute.classList.toggle('danger', audioMuted);
+};
+
+(async ()=>{
+  try{
+    CFG = await loadConfig();
+    normalizeCfg(CFG);
+
+    await loadModel(CFG);
+
+    // Play/Pause Button nur zeigen, wenn Start onClick oder manual ist
+    const startMode = (CFG.animation?.start || 'onPlace').toLowerCase();
+    btnPlay.style.display = (startMode==='onclick' || startMode==='manual') && (mixer && model?.animations?.length) ? '' : 'none';
+    btnMute.style.display = audio ? '' : 'none';
+
+    // Probe: WebXR?
+    let canWebXR=false;
+    try{ canWebXR = !!navigator.xr && await navigator.xr.isSessionSupported('immersive-ar'); }catch{}
+    if (!canWebXR){
+      // Nativ anbieten
+      btnNative.style.display = 'inline-block';
+      btnNative.onclick = ()=>{ location.href = buildNativeLink(CFG); };
+    }
+
+    btnEnter.onclick = async ()=>{
+      try{
+        if (!!navigator.xr && await navigator.xr.isSessionSupported('immersive-ar')){
+          await startXR(CFG);
+          btnEnter.style.display='none';
         } else {
-          reticle.visible = false;
-          frame.visible = false;
-          if (!placed && previewModel) previewModel.visible = false;
+          // iOS Quick Look oder Android Scene Viewer
+          location.href = buildNativeLink(CFG);
         }
-
-        const dt = renderer.xr.getClock().getDelta();
-        if (mixer) mixer.update(dt);
-        renderer.render(scene, camera);
-
-        // Poster ausblenden wenn Tracking+Model bereit
-        if (!document.body.__preflightGone){
-          if (reticle.visible && model){ hidePreflight(); }
-        }
-      });
-    }
-
-    function hidePreflight(){
-      const pf = $('#preflight');
-      if (!pf || document.body.__preflightGone) return;
-      pf.style.transition = 'opacity .35s ease';
-      pf.style.opacity = '0';
-      setTimeout(()=>{ pf.hidden = true; document.body.__preflightGone = true; }, 360);
-      $('#hud').hidden = false;
-      $('#status').textContent = 'Tippe, um zu platzieren';
-    }
-
-    // Load model + optional audio
-    async function loadModel(cfg){
-      const glbUrl = resolveUrl(cfg.model?.url||'scene.glb', cfg);
-      const gltf = await loader.loadAsync(glbUrl);
-      const root = gltf.scene || gltf.scenes?.[0];
-
-      // Basis-Group
-      model = new THREE.Group(); model.name = 'ModelRoot'; model.add(root);
-      model.traverse(n=>{ if (n.material){ n.material.transparent = (n.material.transparent||false); } });
-      model.visible = true; scene.add(model);
-
-      // Ghost
-      previewModel = model.clone(true);
-      previewModel.traverse(n=>{
-        if (n.material){
-          const m = n.material.clone(); m.transparent = true; m.opacity = 0.6; m.depthWrite = false; n.material = m;
-        }
-      });
-      previewModel.visible = false;
-      scene.add(previewModel);
-
-      // Scale
-      baseScale = cfg.model?.scale || 1;
-      model.scale.setScalar(baseScale);
-      previewModel.scale.setScalar(baseScale);
-
-      // Animations
-      if (gltf.animations?.length){
-        model.animations = gltf.animations;
-        mixer = new THREE.AnimationMixer(root);
-        const wantsOnClick = (cfg.animation?.start === 'onClick' || cfg.animation?.start === 'manual');
-        $('#btn-play').hidden = !wantsOnClick;
-      } else {
-        $('#btn-play').hidden = true;
-      }
-
-      // Optional audio
-      if (cfg.audio?.url){
-        const listener = new THREE.AudioListener(); camera.add(listener);
-        const sound = new THREE.Audio(listener);
-        const url = resolveUrl(cfg.audio.url, cfg);
-        try{
-          const res = await fetch(url); const buff = await res.arrayBuffer();
-          const ctx = listener.context; const abuf = await ctx.decodeAudioData(buff);
-          sound.setBuffer(abuf); sound.setLoop(!!cfg.audio.loop); sound.setVolume(0.85);
-          audio = sound; model.add(sound);
-          $('#btn-mute').hidden = false;
-        }catch(e){
-          console.warn('Audio konnte nicht geladen werden:', e);
-          $('#btn-mute').hidden = true;
-        }
-      } else {
-        $('#btn-mute').hidden = true;
-      }
-      return model;
-    }
-
-    // Controls (HUD)
-    function setScale(f){ if (!model) return; const s = THREE.MathUtils.clamp(model.scale.x * f, 0.05, 20); model.scale.setScalar(s); previewModel?.scale.setScalar(s); }
-    function rotateY(deg){ if (!model) return; const r = THREE.MathUtils.degToRad(deg); model.rotation.y += r; previewModel && (previewModel.rotation.y += r); }
-
-    $('#btn-scale-up').onclick = ()=> setScale(1.1);
-    $('#btn-scale-dn').onclick = ()=> setScale(1/1.1);
-    $('#btn-rot-l').onclick = ()=> rotateY(-15);
-    $('#btn-rot-r').onclick = ()=> rotateY(+15);
-    $('#btn-reset').onclick = ()=>{ placed=false; previewModel.visible=true; frame.visible=true; $('#btn-place').textContent='Platzieren'; };
-    $('#btn-place').onclick = ()=>{
-      if (!placed){ toast('Tippe ins AR-Bild, um zu platzieren'); }
-      else { placed=false; previewModel.visible=true; frame.visible=true; $('#btn-place').textContent='Platzieren'; }
-    };
-    $('#btn-play').onclick = ()=>{
-      if (!mixer || !model?.animations?.length) return;
-      const ts = mixer.timeScale ?? 1;
-      if (ts === 0){ mixer.timeScale = 1; if (audio && audio.buffer && !audio.isPlaying) audio.play(); }
-      else { mixer.timeScale = 0; if (audio?.isPlaying) audio.pause?.(); }
-    };
-    $('#btn-mute').onclick = ()=>{
-      if (!audio) return;
-      audioMuted = !audioMuted;
-      audio.setVolume(audioMuted ? 0 : 0.85);
-      $('#btn-mute').classList.toggle('danger', audioMuted);
+      }catch(e){ showErr((e?.message||String(e))); btnNative.style.display='inline-block'; }
     };
 
-    // Native-Fallback link
-    function buildNativeLink(cfg){
-      const glb = resolveUrl(cfg.model?.url||'', cfg);
-      const usdz = resolveUrl(cfg.model?.usdzUrl||'', cfg);
-      const ua = navigator.userAgent || '';
-      const isiOSUA = /iPhone|iPad|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-      if (isiOSUA && usdz){
-        // Quick Look
-        return usdz;
-      }
-      // Android Scene Viewer
-      const file = encodeURIComponent(glb);
-      const title = encodeURIComponent(cfg.meta?.title || 'ARea Model');
-      return `intent://arvr.google.com/scene-viewer/1.0?file=${file}&mode=ar_preferred&title=${title}#Intent;scheme=https;package=com.google.android.googlequicksearchbox;end;`;
-    }
-
-    // ------------- Main -------------
-    (async function(){
-      let cfg = await loadConfig();
-      normalizeCfg(cfg);
-
-      // Poster & Texte
-      $('#eyebrow').textContent = cfg.ui.welcome.eyebrow;
-      $('#title').textContent   = cfg.ui.welcome.title;
-      $('#desc').textContent    = cfg.ui.welcome.desc;
-      $('#poster').src          = resolveUrl(cfg.ui.welcome.poster || 'poster.jpg', cfg);
-
-      // Native-CTA Logik
-      const nativeUrl = buildNativeLink(cfg);
-      const openNative = $('#btn-open-native');
-      openNative.onclick = ()=>{ location.href = nativeUrl; };
-
-      // iOS – WebXR nicht verfügbar -> zeige Native Button sofort, wenn USDZ vorhanden
-      if (isIOS){
-        if (cfg.model?.usdzUrl){ openNative.hidden = false; }
-      }
-
-      // Assets laden
-      await loadModel(cfg);
-      $('#status').textContent = 'Bereit – tippe OK';
-
-      // Start
-      $('#btn-start').onclick = async ()=>{
-        try{
-          if (isIOS){
-            // iOS: Quick Look
-            if (cfg.model?.usdzUrl){
-              location.href = nativeUrl;
-            } else {
-              showDiag(
-                'AR auf iOS nur nativ',
-                'Diese Experience benötigt eine USDZ-Datei für iOS Quick Look. Bitte lade die Szene mit USDZ neu oder öffne auf Android (WebXR).',
-                null
-              );
-            }
-            return;
-          }
-          await startXR(cfg); // Android/WebXR
-          // Preflight blendet aus, sobald Reticle sichtbar + Model geladen
-        }catch(e){
-          const msg = (e?.message||String(e));
-          showDiag(
-            'AR konnte nicht gestartet werden',
-            msg + '\n\nTipps:\n• In Chrome/Edge öffnen (kein In-App-Browser)\n• Kamera erlauben\n• Android: „Google Play-Dienste für AR“ aktualisieren',
-            nativeUrl
-          );
-          openNative.hidden = false;
-        }
-      };
-
-      // Falls WebXR objektiv fehlt (älterer Browser)
-      if (!navigator.xr && !isIOS){
-        openNative.hidden = false;
-      }
-    })().catch(err=>{
-      console.error(err);
-      showDiag('Fehler beim Start', (err?.message||String(err)));
-    });
-  </script>
+  }catch(e){
+    showErr(e?.message||String(e));
+  }
+})();
+</script>
 </body>
 </html>
