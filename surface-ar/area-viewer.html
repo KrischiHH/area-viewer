@@ -10,7 +10,6 @@
   #msg{position:fixed;left:12px;bottom:12px;opacity:.9}
   #err{position:fixed;left:12px;top:12px;z-index:9;background:#b00020;color:#fff;padding:8px 10px;border-radius:8px;display:none;font:12px/1.35 monospace;max-width:min(92vw,680px);white-space:pre-wrap}
   #badge{position:fixed;right:12px;top:12px;z-index:9;background:#0b1220;color:#9cf;padding:6px 8px;border-radius:8px;font:12px system-ui}
-  /* Mini-HUD nur für onClick */
   #hud{position:fixed;right:12px;bottom:12px;z-index:9;display:none;gap:8px;background:rgba(0,0,0,.4);border:1px solid rgba(255,255,255,.15);padding:6px;border-radius:12px;backdrop-filter:blur(6px)}
   #hud button{all:unset;cursor:pointer;color:#fff;padding:8px 12px;border-radius:10px;border:1px solid rgba(255,255,255,.2);background:#111}
 </style>
@@ -39,7 +38,8 @@ let camera, scene, renderer, reticle, controller, hitTestSource=null, hitTestSou
 let model=null, mixer=null, clips=[];
 const clock = new THREE.Clock();
 
-const showErr = (m)=>{ const el=document.getElementById('err'); el.textContent=m; el.style.display='block'; };
+const showErr = (m)=>{ const el=document.getElementById('err'); el.textContent=m; el.style.display='block'; console.error(m); };
+const log = (...a)=>{ try{ console.log('[area-viewer]', ...a); }catch{} };
 
 /* ========= Param-Normalisierung ========= */
 const qs = new URLSearchParams(location.search);
@@ -73,17 +73,17 @@ if (overrideGlb) {
   }
 }
 
-/* ===== Viewer-Konfig (erweitert um Animation) ===== */
+/* ===== Viewer-Konfig (inkl. Animation) ===== */
 const cfg = {
   modelUrl: SCENE_GLB || 'https://modelviewer.dev/shared-assets/models/Astronaut.glb',
   position: [0,0,0],
   rotation: [0,0,0],  // Grad
   scale:[0.6,0.6,0.6],
-  // Animation-Defaults (legacy-kompatibel)
-  animationName: '*',
-  animLoop: true,
-  animIterations: 9999,
-  animStart: 'onPlace' // onPlace | onStart | onClick
+  // Animation (Editor-kompatibel)
+  animationName: '*',           // '*' | 'none' | Clipname
+  animLoop: true,               // true/false
+  animIterations: 9999,         // Wiederholungen bei LoopRepeat
+  animStart: 'onPlace'          // onPlace | onStart | onClick
 };
 
 // ---------- Utils ----------
@@ -106,6 +106,7 @@ async function loadScene(){
       try { return new URL(u, SCENE_JSON).href; } catch { return u; }
     };
 
+    // Model
     if (j?.model?.url)                cfg.modelUrl = resolveAgainstJson(j.model.url);
     if (Array.isArray(j?.model?.position)) cfg.position = j.model.position;
     if (Array.isArray(j?.model?.rotationDeg)) cfg.rotation = j.model.rotationDeg;
@@ -113,18 +114,25 @@ async function loadScene(){
     if (Array.isArray(j?.model?.scale)) cfg.scale = j.model.scale;
     else if (typeof j?.model?.scale === 'number') cfg.scale = [j.model.scale, j.model.scale, j.model.scale];
 
-    // Animation (legacy)
+    // Animation – legacy
     if (j?.model?.animation != null) {
       cfg.animationName = (j.model.animation === '' ? '*' : j.model.animation);
     }
-    // Neues Schema
+    // Neues Schema (Editor)
     if (j?.animation) {
       const a = j.animation;
       if (a.clipName != null) cfg.animationName = (a.clipName === '' ? '*' : a.clipName);
       if (a.loop != null)     cfg.animLoop = !!a.loop;
       if (a.repeats != null)  cfg.animIterations = Math.max(0, parseInt(a.repeats,10)||0) || 9999;
-      if (a.start)            cfg.animStart = String(a.start).toLowerCase(); // onplace/onstart/onclick
+      if (a.start)            cfg.animStart = String(a.start).toLowerCase(); // onstart/onplace/onclick
     }
+
+    log('Scene animation cfg', {
+      animationName: cfg.animationName,
+      animLoop: cfg.animLoop,
+      animIterations: cfg.animIterations,
+      animStart: cfg.animStart
+    });
   }catch(e){
     console.warn(e);
     showErr('scene.json konnte nicht geladen werden:\n'+e.message);
@@ -183,15 +191,15 @@ function init() {
   document.getElementById('enter').addEventListener('click', startAR);
 }
 
-// ---------- Model-Animation ----------
+// ---------- Animation helpers ----------
 function startSelectedClip(){
   if (!mixer || !clips.length) return;
   const sel = (cfg.animationName ?? '*');
-  if (sel === 'none') return;
+  if (sel === 'none') { log('Animation: none'); return; }
 
-  // Wähle Clip
+  // Clip wählen
   const clip = (sel === '*') ? clips[0] : (clips.find(c=>c.name===sel) || clips[0]);
-  if (!clip) return;
+  if (!clip) { log('Keine Clips im GLB'); return; }
 
   mixer.stopAllAction();
   const act = mixer.clipAction(clip);
@@ -202,15 +210,29 @@ function startSelectedClip(){
     act.clampWhenFinished = true;
   }
   act.reset().play();
+  mixer.timeScale = 1;
+  log('Animation gestartet', { name: clip.name, loop: cfg.animLoop, iters: cfg.animIterations });
 }
 
-function togglePlay(){
-  if (!mixer) return;
-  const ts = mixer.timeScale ?? 1;
-  mixer.timeScale = (ts === 0) ? 1 : 0;
+function ensureHudForOnClick(){
+  if (cfg.animStart !== 'onclick') return;
+  const hud = document.getElementById('hud');
+  const btn = document.getElementById('btnPlay');
+  hud.style.display = 'flex';
+  btn.onclick = ()=>{
+    if (!mixer) return;
+    // Beim ersten Klick ggf. den Clip initial starten
+    if (mixer.timeScale == null || (mixer._startedOnce!==true && clips.length)){
+      startSelectedClip();
+      mixer._startedOnce = true;
+      return;
+    }
+    // Danach togglen
+    mixer.timeScale = (mixer.timeScale === 0) ? 1 : 0;
+  };
 }
 
-/* ---------- Flexible GLB/GLTF Loader ---------- */
+/* ---------- GLB/GLTF Loader ---------- */
 async function loadGLTFFlexible(url) {
   const res = await fetch(url, { mode: 'cors', credentials: 'omit' });
   if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
@@ -255,17 +277,17 @@ async function onSelect() {
       scene.add(model);
 
       clips = gltf.animations || [];
+      log('GLB Clips', clips.map(c=>({name:c.name,dur:c.duration.toFixed(2)})));
       if (clips.length) {
         mixer = new THREE.AnimationMixer(model);
+        // Autostart: onPlace oder onStart → direkt nach Platzierung starten
         if (cfg.animStart === 'onplace' || cfg.animStart === 'onstart') {
           startSelectedClip();
         } else if (cfg.animStart === 'onclick') {
-          document.getElementById('hud').style.display = 'flex';
-          document.getElementById('btnPlay').onclick = ()=>{
-            if (mixer.timeScale == null) startSelectedClip();
-            else togglePlay();
-          };
+          ensureHudForOnClick();
         }
+      } else {
+        log('Keine Animationen im Modell gefunden.');
       }
     } catch (err) {
       console.error('GLTF load failed', err);
@@ -281,6 +303,7 @@ async function startAR(){
   if (!navigator.xr) { showErr('WebXR nicht verfügbar.'); return; }
   const isARSupported = await navigator.xr.isSessionSupported('immersive-ar');
   if (!isARSupported) { showErr('Dein Gerät/Browser unterstützt kein WebXR-AR.'); return; }
+
   const session = await navigator.xr.requestSession('immersive-ar', { requiredFeatures: ['hit-test','local-floor'] });
   renderer.xr.setReferenceSpaceType('local-floor');
   await renderer.xr.setSession(session);
