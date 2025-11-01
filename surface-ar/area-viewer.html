@@ -10,6 +10,9 @@
   #msg{position:fixed;left:12px;bottom:12px;opacity:.9}
   #err{position:fixed;left:12px;top:12px;z-index:9;background:#b00020;color:#fff;padding:8px 10px;border-radius:8px;display:none;font:12px/1.35 monospace;max-width:min(92vw,680px);white-space:pre-wrap}
   #badge{position:fixed;right:12px;top:12px;z-index:9;background:#0b1220;color:#9cf;padding:6px 8px;border-radius:8px;font:12px system-ui}
+  /* Mini-HUD nur für onClick */
+  #hud{position:fixed;right:12px;bottom:12px;z-index:9;display:none;gap:8px;background:rgba(0,0,0,.4);border:1px solid rgba(255,255,255,.15);padding:6px;border-radius:12px;backdrop-filter:blur(6px)}
+  #hud button{all:unset;cursor:pointer;color:#fff;padding:8px 12px;border-radius:10px;border:1px solid rgba(255,255,255,.2);background:#111}
 </style>
 <script type="importmap">
 {
@@ -25,6 +28,7 @@
   <button id="enter">Start AR</button>
   <div id="msg">Android Chrome empfohlen · Tippe auf den Boden, um das Modell zu platzieren</div>
   <div id="badge">WEBXR BUILD</div>
+  <div id="hud"><button id="btnPlay">Play/Pause</button></div>
 
 <script type="module">
 import * as THREE from 'three';
@@ -39,11 +43,8 @@ const showErr = (m)=>{ const el=document.getElementById('err'); el.textContent=m
 
 /* ========= Param-Normalisierung ========= */
 const qs = new URLSearchParams(location.search);
-// --- Force-Param: niemals auf Native umleiten, wenn ?force=webxr ---
 const FORCE = (qs.get('force') || '').toLowerCase();
 if (FORCE === 'webxr') {
-  window.__FORCE_MODE = 'webxr';
-  window.__NO_NATIVE_REDIRECT__ = true;
   try { document.getElementById('badge').textContent = 'WEBXR (forced)'; } catch {}
 }
 let sceneParam = (qs.get('scene') || qs.get('src') || '').trim();
@@ -72,6 +73,7 @@ if (overrideGlb) {
   }
 }
 
+/* ===== Viewer-Konfig (erweitert um Animation) ===== */
 const cfg = {
   modelUrl: SCENE_GLB || 'https://modelviewer.dev/shared-assets/models/Astronaut.glb',
   position: [0,0,0],
@@ -81,13 +83,12 @@ const cfg = {
   animationName: '*',
   animLoop: true,
   animIterations: 9999,
-  animStart: 'onPlace' // onPlace | onStart | onClick (onClick derzeit ohne Button-UI)
+  animStart: 'onPlace' // onPlace | onStart | onClick
 };
 
 // ---------- Utils ----------
 const rad2deg = r => (r||0) * 180/Math.PI;
 const deg2rad = d => (d||0) * Math.PI/180;
-const clamp = (v,min,max)=>Math.max(min,Math.min(max,v));
 
 // ---------- Szene aus externer JSON (optional) ----------
 async function loadScene(){
@@ -105,25 +106,24 @@ async function loadScene(){
       try { return new URL(u, SCENE_JSON).href; } catch { return u; }
     };
 
-    // Model
-    if (j?.model?.url)          cfg.modelUrl = resolveAgainstJson(j.model.url);
+    if (j?.model?.url)                cfg.modelUrl = resolveAgainstJson(j.model.url);
     if (Array.isArray(j?.model?.position)) cfg.position = j.model.position;
     if (Array.isArray(j?.model?.rotationDeg)) cfg.rotation = j.model.rotationDeg;
     else if (Array.isArray(j?.model?.rotation)) cfg.rotation = j.model.rotation;
     if (Array.isArray(j?.model?.scale)) cfg.scale = j.model.scale;
     else if (typeof j?.model?.scale === 'number') cfg.scale = [j.model.scale, j.model.scale, j.model.scale];
 
-    // Animation – legacy: model.animation ('*' | 'none' | Clip-Name)
+    // Animation (legacy)
     if (j?.model?.animation != null) {
       cfg.animationName = (j.model.animation === '' ? '*' : j.model.animation);
     }
-    // Neues Schema (falls vorhanden)
+    // Neues Schema
     if (j?.animation) {
       const a = j.animation;
       if (a.clipName != null) cfg.animationName = (a.clipName === '' ? '*' : a.clipName);
       if (a.loop != null)     cfg.animLoop = !!a.loop;
-      if (a.repeats != null)  cfg.animIterations = clamp(parseInt(a.repeats,10)||0, 0, 999999) || 9999;
-      if (a.start)            cfg.animStart = String(a.start).toLowerCase(); // onPlace/onStart/onClick
+      if (a.repeats != null)  cfg.animIterations = Math.max(0, parseInt(a.repeats,10)||0) || 9999;
+      if (a.start)            cfg.animStart = String(a.start).toLowerCase(); // onplace/onstart/onclick
     }
   }catch(e){
     console.warn(e);
@@ -148,7 +148,7 @@ function applyQueryFallback(){
   if ([sx,sy,sz].some(v=>!isNaN(v))) cfg.scale = [sx||1, sy||1, sz||1];
 
   const an = (qs.get('anim') || '').trim();
-  if (an) cfg.animationName = an; // z. B. ?anim=Walk
+  if (an) cfg.animationName = an;
 }
 
 // ---------- THREE Init ----------
@@ -181,33 +181,33 @@ function init() {
 
   addEventListener('resize', ()=>renderer.setSize(innerWidth, innerHeight));
   document.getElementById('enter').addEventListener('click', startAR);
-
-  try { window.opener && window.opener.postMessage({ type:'webar-ready' }, location.origin); } catch {}
 }
 
 // ---------- Model-Animation ----------
-function playClips(){
+function startSelectedClip(){
   if (!mixer || !clips.length) return;
   const sel = (cfg.animationName ?? '*');
-
   if (sel === 'none') return;
 
-  if (sel === '*'){
-    // Nimm ersten Clip – für mobiles AR reicht ein Clip
-    const c = clips[0];
-    const act = mixer.clipAction(c);
-    act.setLoop(cfg.animLoop ? THREE.LoopRepeat : THREE.LoopOnce, cfg.animLoop ? (cfg.animIterations||9999) : 0);
-    act.clampWhenFinished = !cfg.animLoop;
-    act.reset().play();
-    return;
-  }
+  // Wähle Clip
+  const clip = (sel === '*') ? clips[0] : (clips.find(c=>c.name===sel) || clips[0]);
+  if (!clip) return;
 
-  const c = clips.find(x=>x.name===sel) || clips[0];
-  if (!c) return;
-  const act = mixer.clipAction(c);
-  act.setLoop(cfg.animLoop ? THREE.LoopRepeat : THREE.LoopOnce, cfg.animLoop ? (cfg.animIterations||9999) : 0);
-  act.clampWhenFinished = !cfg.animLoop;
+  mixer.stopAllAction();
+  const act = mixer.clipAction(clip);
+  if (cfg.animLoop){
+    act.setLoop(THREE.LoopRepeat, cfg.animIterations || 9999);
+  } else {
+    act.setLoop(THREE.LoopOnce, 0);
+    act.clampWhenFinished = true;
+  }
   act.reset().play();
+}
+
+function togglePlay(){
+  if (!mixer) return;
+  const ts = mixer.timeScale ?? 1;
+  mixer.timeScale = (ts === 0) ? 1 : 0;
 }
 
 /* ---------- Flexible GLB/GLTF Loader ---------- */
@@ -257,11 +257,15 @@ async function onSelect() {
       clips = gltf.animations || [];
       if (clips.length) {
         mixer = new THREE.AnimationMixer(model);
-        // Startmodus: onPlace → hier starten; onStart behandeln wir identisch (kein Poster/UI)
         if (cfg.animStart === 'onplace' || cfg.animStart === 'onstart') {
-          playClips();
+          startSelectedClip();
+        } else if (cfg.animStart === 'onclick') {
+          document.getElementById('hud').style.display = 'flex';
+          document.getElementById('btnPlay').onclick = ()=>{
+            if (mixer.timeScale == null) startSelectedClip();
+            else togglePlay();
+          };
         }
-        // onClick: später mit UI-Button nachrüstbar
       }
     } catch (err) {
       console.error('GLTF load failed', err);
@@ -277,8 +281,6 @@ async function startAR(){
   if (!navigator.xr) { showErr('WebXR nicht verfügbar.'); return; }
   const isARSupported = await navigator.xr.isSessionSupported('immersive-ar');
   if (!isARSupported) { showErr('Dein Gerät/Browser unterstützt kein WebXR-AR.'); return; }
-
-  // Muster wie dein funktionierender Viewer:
   const session = await navigator.xr.requestSession('immersive-ar', { requiredFeatures: ['hit-test','local-floor'] });
   renderer.xr.setReferenceSpaceType('local-floor');
   await renderer.xr.setSession(session);
