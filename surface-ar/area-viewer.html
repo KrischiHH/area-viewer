@@ -39,12 +39,11 @@ const showErr = (m)=>{ const el=document.getElementById('err'); el.textContent=m
 
 /* ========= Param-Normalisierung ========= */
 const qs = new URLSearchParams(location.search);
-  // --- Force-Param: niemals auf Native umleiten, wenn ?force=webxr ---
+// --- Force-Param: niemals auf Native umleiten, wenn ?force=webxr ---
 const FORCE = (qs.get('force') || '').toLowerCase();
 if (FORCE === 'webxr') {
   window.__FORCE_MODE = 'webxr';
-  window.__NO_NATIVE_REDIRECT__ = true;   // falls irgendwo (global) Redirect-Logik existiert
-  // (optional) Badge aktualisieren:
+  window.__NO_NATIVE_REDIRECT__ = true;
   try { document.getElementById('badge').textContent = 'WEBXR (forced)'; } catch {}
 }
 let sceneParam = (qs.get('scene') || qs.get('src') || '').trim();
@@ -78,12 +77,17 @@ const cfg = {
   position: [0,0,0],
   rotation: [0,0,0],  // Grad
   scale:[0.6,0.6,0.6],
-  animation: '*'
+  // Animation-Defaults (legacy-kompatibel)
+  animationName: '*',
+  animLoop: true,
+  animIterations: 9999,
+  animStart: 'onPlace' // onPlace | onStart | onClick (onClick derzeit ohne Button-UI)
 };
 
 // ---------- Utils ----------
 const rad2deg = r => (r||0) * 180/Math.PI;
 const deg2rad = d => (d||0) * Math.PI/180;
+const clamp = (v,min,max)=>Math.max(min,Math.min(max,v));
 
 // ---------- Szene aus externer JSON (optional) ----------
 async function loadScene(){
@@ -101,12 +105,26 @@ async function loadScene(){
       try { return new URL(u, SCENE_JSON).href; } catch { return u; }
     };
 
-    if (j?.model?.url)         cfg.modelUrl = resolveAgainstJson(j.model.url);
+    // Model
+    if (j?.model?.url)          cfg.modelUrl = resolveAgainstJson(j.model.url);
     if (Array.isArray(j?.model?.position)) cfg.position = j.model.position;
     if (Array.isArray(j?.model?.rotationDeg)) cfg.rotation = j.model.rotationDeg;
     else if (Array.isArray(j?.model?.rotation)) cfg.rotation = j.model.rotation;
-    if (Array.isArray(j?.model?.scale))    cfg.scale    = j.model.scale;
-    if (j?.model?.animation!=null)         cfg.animation= j.model.animation;
+    if (Array.isArray(j?.model?.scale)) cfg.scale = j.model.scale;
+    else if (typeof j?.model?.scale === 'number') cfg.scale = [j.model.scale, j.model.scale, j.model.scale];
+
+    // Animation – legacy: model.animation ('*' | 'none' | Clip-Name)
+    if (j?.model?.animation != null) {
+      cfg.animationName = (j.model.animation === '' ? '*' : j.model.animation);
+    }
+    // Neues Schema (falls vorhanden)
+    if (j?.animation) {
+      const a = j.animation;
+      if (a.clipName != null) cfg.animationName = (a.clipName === '' ? '*' : a.clipName);
+      if (a.loop != null)     cfg.animLoop = !!a.loop;
+      if (a.repeats != null)  cfg.animIterations = clamp(parseInt(a.repeats,10)||0, 0, 999999) || 9999;
+      if (a.start)            cfg.animStart = String(a.start).toLowerCase(); // onPlace/onStart/onClick
+    }
   }catch(e){
     console.warn(e);
     showErr('scene.json konnte nicht geladen werden:\n'+e.message);
@@ -128,6 +146,9 @@ function applyQueryFallback(){
 
   const sx = parseFloat(qs.get('sx')), sy = parseFloat(qs.get('sy')), sz = parseFloat(qs.get('sz'));
   if ([sx,sy,sz].some(v=>!isNaN(v))) cfg.scale = [sx||1, sy||1, sz||1];
+
+  const an = (qs.get('anim') || '').trim();
+  if (an) cfg.animationName = an; // z. B. ?anim=Walk
 }
 
 // ---------- THREE Init ----------
@@ -167,15 +188,26 @@ function init() {
 // ---------- Model-Animation ----------
 function playClips(){
   if (!mixer || !clips.length) return;
-  const a = cfg.animation;
-  if (a==='none') return;
-  if (a==='*'){
-    clips.forEach(c=>mixer.clipAction(c).play());
-  } else if (typeof a==='string'){
-    const c = clips.find(c=>c.name===a) || clips[0]; mixer.clipAction(c).play();
-  } else {
-    const idx = Math.max(0, Math.min(clips.length-1, parseInt(a||0,10))); mixer.clipAction(clips[idx]).play();
+  const sel = (cfg.animationName ?? '*');
+
+  if (sel === 'none') return;
+
+  if (sel === '*'){
+    // Nimm ersten Clip – für mobiles AR reicht ein Clip
+    const c = clips[0];
+    const act = mixer.clipAction(c);
+    act.setLoop(cfg.animLoop ? THREE.LoopRepeat : THREE.LoopOnce, cfg.animLoop ? (cfg.animIterations||9999) : 0);
+    act.clampWhenFinished = !cfg.animLoop;
+    act.reset().play();
+    return;
   }
+
+  const c = clips.find(x=>x.name===sel) || clips[0];
+  if (!c) return;
+  const act = mixer.clipAction(c);
+  act.setLoop(cfg.animLoop ? THREE.LoopRepeat : THREE.LoopOnce, cfg.animLoop ? (cfg.animIterations||9999) : 0);
+  act.clampWhenFinished = !cfg.animLoop;
+  act.reset().play();
 }
 
 /* ---------- Flexible GLB/GLTF Loader ---------- */
@@ -225,7 +257,11 @@ async function onSelect() {
       clips = gltf.animations || [];
       if (clips.length) {
         mixer = new THREE.AnimationMixer(model);
-        playClips();
+        // Startmodus: onPlace → hier starten; onStart behandeln wir identisch (kein Poster/UI)
+        if (cfg.animStart === 'onplace' || cfg.animStart === 'onstart') {
+          playClips();
+        }
+        // onClick: später mit UI-Button nachrüstbar
       }
     } catch (err) {
       console.error('GLTF load failed', err);
@@ -241,6 +277,8 @@ async function startAR(){
   if (!navigator.xr) { showErr('WebXR nicht verfügbar.'); return; }
   const isARSupported = await navigator.xr.isSessionSupported('immersive-ar');
   if (!isARSupported) { showErr('Dein Gerät/Browser unterstützt kein WebXR-AR.'); return; }
+
+  // Muster wie dein funktionierender Viewer:
   const session = await navigator.xr.requestSession('immersive-ar', { requiredFeatures: ['hit-test','local-floor'] });
   renderer.xr.setReferenceSpaceType('local-floor');
   await renderer.xr.setSession(session);
