@@ -67,8 +67,7 @@ async function loadConfig(){
         const bin = atob(after);
         const bytes = Uint8Array.from(bin, c => c.charCodeAt(0));
         const text = new TextDecoder('utf-8').decode(bytes);
-        const json = JSON.parse(text);
-        return json;
+        return JSON.parse(text);
       } else {
         return JSON.parse(decodeURIComponent(after));
       }
@@ -116,12 +115,10 @@ function normalizeCfg(cfg){
   }
   if (!cfg.animation.start) cfg.animation.start = 'onPlace'; // Standard im AR-Kontext
   if (cfg.animation.loop == null) cfg.animation.loop = true;
-  // optional: iterations
   if (cfg.animation.iterations == null) cfg.animation.iterations = 9999;
 }
 
 function buildNativeLink(cfg){
-  const base = (cfg.__base||'');
   const glb  = resolveRel(cfg.model?.url||'scene.glb', cfg);
   const usdz = resolveRel(cfg.model?.usdzUrl||'', cfg);
   const ua = navigator.userAgent || '';
@@ -162,7 +159,7 @@ reticle.visible = false;
 scene.add(reticle);
 
 // Model + Animation
-let model=null, modelRoot=null, previewVisible=false;
+let model=null, modelRoot=null;
 let mixer=null, audio=null, audioMuted=false;
 let placed=false;
 let baseScale=1;
@@ -245,68 +242,83 @@ function pauseAnimationAndAudio(){
 }
 
 // ---------- WebXR ----------
-let xrSession=null, refSpace=null, viewerSpace=null, hitTestSource=null;
+let xrSession=null, hitTestSource=null;
 
-async function requestBestRefSpace(sess){
-  const order=['local-floor','local','viewer'];
-  for (const kind of order){
-    try{ const rs = await sess.requestReferenceSpace(kind); return rs; }catch{}
-  }
-  throw new Error('Kein kompatibler ReferenceSpace verfügbar (local-floor/local/viewer)');
-}
-
+// Start mit stabilem Muster wie webxr.html
 async function startXR(cfg){
   if (!navigator.xr) throw new Error('WebXR wird in diesem Browser nicht unterstützt.');
-  const supported = await navigator.xr.isSessionSupported('immersive-ar');
-  if (!supported) throw new Error('AR-Session wird auf diesem Gerät/Browser nicht unterstützt.');
+  let session = null;
 
-  const sessionInit = { requiredFeatures:['hit-test'], optionalFeatures:['dom-overlay'], domOverlay:{ root: document.body } };
-  let sess=null;
-  try{ sess = await navigator.xr.requestSession('immersive-ar', sessionInit); }
-  catch(_){ sess = await navigator.xr.requestSession('immersive-ar', { requiredFeatures:['hit-test'] }); }
+  // 1) Bevorzugt: local-floor erzwingen (wie dein funktionierender Viewer)
+  try {
+    session = await navigator.xr.requestSession('immersive-ar', {
+      requiredFeatures: ['hit-test','local-floor'],
+      optionalFeatures: ['dom-overlay'],
+      domOverlay: { root: document.body }
+    });
+    // XRManager auf local-floor setzen, bevor die Session gebunden wird
+    try { renderer.xr.setReferenceSpaceType('local-floor'); } catch {}
+    await renderer.xr.setSession(session);
+  } catch {
+    // 2) Fallback: nur hit-test + local (KEIN nativer Fallback hier)
+    session = await navigator.xr.requestSession('immersive-ar', {
+      requiredFeatures: ['hit-test'],
+      optionalFeatures: ['dom-overlay'],
+      domOverlay: { root: document.body }
+    });
+    try { renderer.xr.setReferenceSpaceType('local'); } catch {}
+    await renderer.xr.setSession(session);
+  }
 
-  xrSession = sess;
-  renderer.xr.enabled = true;
-  await renderer.xr.setSession(sess);
+  xrSession = session;
 
-  refSpace   = await requestBestRefSpace(sess);
-  try{ viewerSpace = await sess.requestReferenceSpace('viewer'); }catch{ viewerSpace = refSpace; }
-  try{ hitTestSource = await sess.requestHitTestSource({ space: viewerSpace }); }
-  catch(e){ throw new Error('Hit-Test nicht verfügbar: ' + (e?.message||String(e))); }
+  // viewerSpace + Hit-Test Quelle – robust, aber ohne Abbruchmeldungen
+  let viewerSpace = null;
+  try { viewerSpace = await session.requestReferenceSpace('viewer'); } catch(e) {
+    // Sehr selten; wenn viewerSpace fehlt, funktioniert Hit-Test nicht sinnvoll
+    console.warn('viewerSpace nicht verfügbar:', e);
+  }
+  if (viewerSpace) {
+    try { hitTestSource = await session.requestHitTestSource({ space: viewerSpace }); }
+    catch(e){ console.warn('Hit-Test Source nicht verfügbar:', e); }
+  }
 
-  // Platzierung: erster Tap platziert; "Neu platzieren" setzt placed=false
-  sess.addEventListener('select', ()=>{
-    if (!reticle.visible || !model) return;
+  // Platzierung
+  session.addEventListener('select', ()=>{
+    if (!hitTestSource || !model) return;
+    // Wir verwenden weiter unten die Reticle-Pose; falls Reticle nicht sichtbar: nichts tun
+    if (!reticle.visible) return;
+
     const m = new THREE.Matrix4(); m.copy(reticle.matrix);
     model.matrix.copy(m);
     model.matrix.decompose(model.position, model.quaternion, model.scale);
     model.visible = true;
     placed = true;
 
-    // Animation starten je nach Startmodus
     const start = (cfg.animation?.start || 'onPlace').toLowerCase();
-    if (start === 'onPlace' || start === 'onstart'){
-      // bei onStart hier sinnvollerweise ebenfalls starten (nach Platzierung)
+    if (start === 'onplace' || start === 'onstart'){
       playAnimation(cfg);
     }
     document.getElementById('hud').style.display = '';
   });
 
+  // Renderloop: ReferenceSpace kommt aus XRManager (local-floor/local)
+  const clock = renderer.xr.getClock();
   renderer.setAnimationLoop((time, frame)=>{
     if (!frame) return;
-
-    const dt = renderer.xr.getClock().getDelta();
+    const dt = clock.getDelta();
     if (mixer) mixer.update(dt);
 
     if (hitTestSource){
+      const ref = renderer.xr.getReferenceSpace();
       const hits = frame.getHitTestResults(hitTestSource);
       if (hits.length){
-        const pose = hits[0].getPose(refSpace);
+        const pose = hits[0].getPose(ref);
         if (pose?.transform){
           reticle.visible = true;
           reticle.matrix.fromArray(pose.transform.matrix);
         }
-      }else{
+      } else {
         reticle.visible = false;
       }
     }
@@ -368,7 +380,7 @@ btnMute.onclick = ()=>{
     let canWebXR=false;
     try{ canWebXR = !!navigator.xr && await navigator.xr.isSessionSupported('immersive-ar'); }catch{}
     if (!canWebXR){
-      // Nativ anbieten
+      // Nur falls wirklich kein WebXR verfügbar ist → native anbieten
       btnNative.style.display = 'inline-block';
       btnNative.onclick = ()=>{ location.href = buildNativeLink(CFG); };
     }
@@ -379,10 +391,13 @@ btnMute.onclick = ()=>{
           await startXR(CFG);
           btnEnter.style.display='none';
         } else {
-          // iOS Quick Look oder Android Scene Viewer
           location.href = buildNativeLink(CFG);
         }
-      }catch(e){ showErr((e?.message||String(e))); btnNative.style.display='inline-block'; }
+      }catch(e){
+        // Keine harte Fehlermeldung; optional: native öffnen oder dezenten Hinweis
+        console.warn('startXR Fehler:', e);
+        showErr((e?.message||String(e)));
+      }
     };
 
   }catch(e){
