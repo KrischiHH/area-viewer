@@ -187,7 +187,12 @@ function init() {
   controller.addEventListener('select', onSelect);
   scene.add(controller);
 
-  addEventListener('resize', ()=>renderer.setSize(innerWidth, innerHeight));
+  addEventListener('resize', ()=>{
+  // Während XR presenting NICHT setSize aufrufen – das macht Three im XR-Loop selbst
+  if (!renderer.xr.isPresenting) {
+    renderer.setSize(innerWidth, innerHeight);
+  }
+});
   document.getElementById('enter').addEventListener('click', startAR);
 }
 
