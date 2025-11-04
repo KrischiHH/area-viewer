@@ -6,12 +6,24 @@
 <title>ARea Viewer – WebXR Hit-Test (mit Animation)</title>
 <style>
   html,body{margin:0;height:100%;overflow:hidden;background:#000;color:#fff;font-family:system-ui}
-  #enter{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);padding:12px 18px;border-radius:12px;border:1px solid #555;background:#111;color:#fff}
+  #welcome{position:fixed;inset:0;z-index:99;background:#000;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:20px}
+  #welcome.hidden{display:none}
+  #welcomePoster{max-width:90%;max-height:40vh;object-fit:contain;margin-bottom:20px;border-radius:8px}
+  #welcomeEyebrow{font-size:12px;color:#9cf;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px}
+  #welcomeTitle{font-size:24px;font-weight:600;margin-bottom:8px;text-align:center}
+  #welcomeDesc{font-size:14px;color:#ccc;margin-bottom:20px;text-align:center;max-width:400px}
+  #welcomeBtn{padding:12px 24px;border-radius:12px;border:1px solid #555;background:#111;color:#fff;font-size:16px;cursor:pointer}
+  #welcomeBtn:hover{background:#222}
+  #nativeCta{margin-top:12px;padding:10px 20px;border-radius:10px;border:1px solid #555;background:#111;color:#fff;font-size:14px;cursor:pointer;display:none}
+  #nativeCta:hover{background:#222}
+  #diagnostics{margin-top:16px;font-size:12px;color:#f88;text-align:center;display:none}
+  #enter{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);padding:12px 18px;border-radius:12px;border:1px solid #555;background:#111;color:#fff;display:none}
   #msg{position:fixed;left:12px;bottom:12px;opacity:.9}
   #err{position:fixed;left:12px;top:12px;z-index:9;background:#b00020;color:#fff;padding:8px 10px;border-radius:8px;display:none;font:12px/1.35 monospace;max-width:min(92vw,680px);white-space:pre-wrap}
   #badge{position:fixed;right:12px;top:12px;z-index:9;background:#0b1220;color:#9cf;padding:6px 8px;border-radius:8px;font:12px system-ui}
-  #hud{position:fixed;right:12px;bottom:12px;z-index:9;display:none;gap:8px;background:rgba(0,0,0,.4);border:1px solid rgba(255,255,255,.15);padding:6px;border-radius:12px;backdrop-filter:blur(6px)}
-  #hud button{all:unset;cursor:pointer;color:#fff;padding:8px 12px;border-radius:10px;border:1px solid rgba(255,255,255,.2);background:#111}
+  #hud{position:fixed;right:12px;bottom:12px;z-index:9;display:none;flex-wrap:wrap;gap:6px;background:rgba(0,0,0,.4);border:1px solid rgba(255,255,255,.15);padding:8px;border-radius:12px;backdrop-filter:blur(6px);max-width:90vw}
+  #hud button{all:unset;cursor:pointer;color:#fff;padding:8px 12px;border-radius:10px;border:1px solid rgba(255,255,255,.2);background:#111;font-size:13px;white-space:nowrap}
+  #hud button:hover{background:#222}
 </style>
 <script type="importmap">
 {
@@ -23,11 +35,28 @@
 </script>
 </head>
 <body>
+  <div id="welcome">
+    <img id="welcomePoster" style="display:none"/>
+    <div id="welcomeEyebrow"></div>
+    <div id="welcomeTitle"></div>
+    <div id="welcomeDesc"></div>
+    <button id="welcomeBtn">Start AR</button>
+    <button id="nativeCta">Open in Native AR</button>
+    <div id="diagnostics"></div>
+  </div>
   <div id="err"></div>
   <button id="enter">Start AR</button>
   <div id="msg">Android Chrome empfohlen · Tippe auf den Boden, um das Modell zu platzieren</div>
   <div id="badge">WEBXR BUILD</div>
-  <div id="hud"><button id="btnPlay">Play/Pause</button></div>
+  <div id="hud">
+    <button id="btnScaleUp">Scale +10%</button>
+    <button id="btnScaleDown">Scale -10%</button>
+    <button id="btnRotLeft">Rotate -15°</button>
+    <button id="btnRotRight">Rotate +15°</button>
+    <button id="btnReset">Reset</button>
+    <button id="btnPlay" style="display:none">Play/Pause</button>
+    <button id="btnMute" style="display:none">Mute</button>
+  </div>
 
 <script type="module">
 import * as THREE from 'three';
@@ -35,128 +64,213 @@ import { GLTFLoader }  from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 
 let camera, scene, renderer, reticle, controller, hitTestSource=null, hitTestSourceRequested=false;
-let model=null, mixer=null, clips=[];
+let model=null, ghost=null, mixer=null, clips=[], audioListener=null, audio=null;
 const clock = new THREE.Clock();
+let cfg = null; // Will be populated by loadConfig + normalizeCfg
+let __base = ''; // Base URL for resolving relative paths
+let placed = false; // Track if model has been placed
+let initialScale = 1.0; // Store initial scale for reset
+let initialRotation = 0; // Store initial rotation for reset
 
 const showErr = (m)=>{ const el=document.getElementById('err'); el.textContent=m; el.style.display='block'; console.error(m); };
 const log = (...a)=>{ try{ console.log('[area-viewer]', ...a); }catch{} };
 
-/* ========= Param-Normalisierung ========= */
+/* ========= Config Loading & Normalization ========= */
 const qs = new URLSearchParams(location.search);
 const FORCE = (qs.get('force') || '').toLowerCase();
 if (FORCE === 'webxr') {
   try { document.getElementById('badge').textContent = 'WEBXR (forced)'; } catch {}
 }
-let sceneParam = (qs.get('scene') || qs.get('src') || '').trim();
-const workerBase = (qs.get('base') || 'https://area-publish.area-webar.workers.dev').replace(/\/$/, '');
-const overrideGlb = (qs.get('glb') || '').trim();
 
 const isHttp     = u => /^https?:\/\//i.test(u);
 const isDataOrBlob = u => /^data:|^blob:/i.test(u);
 const isGlbLike  = u => /\.(?:glb|gltf)(?:[?#]|$)/i.test(u);
 
-let SCENE_GLB = '';
-let SCENE_JSON = '';
+// 1) loadConfig(): robust scene config loading
+async function loadConfig() {
+  const sceneParam = (qs.get('scene') || qs.get('src') || '').trim();
+  const workerBase = (qs.get('base') || 'https://area-publish.area-webar.workers.dev').replace(/\/$/, '');
+  const overrideGlb = (qs.get('glb') || '').trim();
 
-if (overrideGlb) {
-  SCENE_GLB = overrideGlb;
-} else if (sceneParam) {
-  if (isDataOrBlob(sceneParam)) {
-    SCENE_JSON = sceneParam;
+  // Backwards compatibility: If only GLB URL provided, run without scene.json
+  if (overrideGlb && !sceneParam) {
+    log('Backwards compat: GLB only mode');
+    return { model: { url: overrideGlb, scale: 1.0 } };
+  }
+
+  if (!sceneParam) {
+    // No config, use defaults
+    return { model: { url: 'https://modelviewer.dev/shared-assets/models/Astronaut.glb', scale: 1.0 } };
+  }
+
+  // Parse scene parameter
+  if (sceneParam.startsWith('data:')) {
+    // data URI - decode base64 or plain JSON
+    try {
+      const match = sceneParam.match(/^data:(?:application\/json)?;base64,(.+)$/);
+      if (match) {
+        const json = atob(match[1]);
+        return JSON.parse(json);
+      } else {
+        const match2 = sceneParam.match(/^data:(?:application\/json)?,(.+)$/);
+        if (match2) return JSON.parse(decodeURIComponent(match2[1]));
+      }
+      return JSON.parse(sceneParam.replace(/^data:(?:application\/json)?,/, ''));
+    } catch (e) {
+      showErr('Failed to parse data URI: ' + e.message);
+      return { model: { url: '', scale: 1.0 } };
+    }
   } else if (isHttp(sceneParam)) {
-    if (isGlbLike(sceneParam)) SCENE_GLB = sceneParam;
-    else SCENE_JSON = sceneParam;
+    // URL - fetch scene.json
+    try {
+      const srcUrl = decodeURIComponent(sceneParam);
+      const r = await fetch(srcUrl, {cache:'no-cache', mode:'cors'});
+      if (!r.ok) throw new Error('HTTP ' + r.status + ' ' + r.statusText);
+      const json = await r.json();
+      // Set __base from directory
+      __base = srcUrl.replace(/[^\/]*$/, '');
+      log('Loaded scene.json from URL, base:', __base);
+      return json;
+    } catch (e) {
+      showErr('Failed to load scene.json: ' + e.message);
+      return { model: { url: '', scale: 1.0 } };
+    }
   } else {
+    // Scene ID - construct URLs with worker base
     const id = sceneParam.replace(/\/+$/,'');
-    SCENE_GLB  = `${workerBase}/scenes/${encodeURIComponent(id)}/scene.glb`;
-    SCENE_JSON = `${workerBase}/scenes/${encodeURIComponent(id)}/scene.json`;
+    __base = `${workerBase}/scenes/${encodeURIComponent(id)}/`;
+    const sceneJsonUrl = __base + 'scene.json';
+    try {
+      const r = await fetch(sceneJsonUrl, {cache:'no-cache', mode:'cors'});
+      if (!r.ok) throw new Error('HTTP ' + r.status + ' ' + r.statusText);
+      const json = await r.json();
+      log('Loaded scene.json for ID:', id, 'base:', __base);
+      return json;
+    } catch (e) {
+      showErr('Failed to load scene.json for ID ' + id + ': ' + e.message);
+      return { model: { url: '', scale: 1.0 } };
+    }
   }
 }
 
-/* ===== Viewer-Konfig (inkl. Animation) ===== */
-const cfg = {
-  modelUrl: SCENE_GLB || 'https://modelviewer.dev/shared-assets/models/Astronaut.glb',
-  position: [0,0,0],
-  rotation: [0,0,0],  // Grad
-  scale:[0.6,0.6,0.6],
-  // Animation (Editor-kompatibel)
-  animationName: '*',           // '*' | 'none' | Clipname
-  animLoop: true,               // true/false
-  animIterations: 9999,         // Wiederholungen bei LoopRepeat
-  animStart: 'onPlace'          // onPlace | onStart | onClick
-};
-
-// ---------- Utils ----------
-const rad2deg = r => (r||0) * 180/Math.PI;
-const deg2rad = d => (d||0) * Math.PI/180;
-
-// ---------- Szene aus externer JSON (optional) ----------
-async function loadScene(){
-  if (SCENE_GLB) { cfg.modelUrl = SCENE_GLB; return; }
-  if (!SCENE_JSON) return;
-
-  try{
-    const r = await fetch(SCENE_JSON, {cache:'no-cache', mode:'cors'});
-    if(!r.ok) throw new Error('scene.json Load '+r.status+' '+r.statusText);
-    const j = await r.json();
-
-    const resolveAgainstJson = (u)=>{
-      if (!u) return u;
-      if (isHttp(u) || isDataOrBlob(u)) return u;
-      try { return new URL(u, SCENE_JSON).href; } catch { return u; }
-    };
-
-    // Model
-    if (j?.model?.url)                cfg.modelUrl = resolveAgainstJson(j.model.url);
-    if (Array.isArray(j?.model?.position)) cfg.position = j.model.position;
-    if (Array.isArray(j?.model?.rotationDeg)) cfg.rotation = j.model.rotationDeg;
-    else if (Array.isArray(j?.model?.rotation)) cfg.rotation = j.model.rotation;
-    if (Array.isArray(j?.model?.scale)) cfg.scale = j.model.scale;
-    else if (typeof j?.model?.scale === 'number') cfg.scale = [j.model.scale, j.model.scale, j.model.scale];
-
-    // Animation – legacy
-    if (j?.model?.animation != null) {
-      cfg.animationName = (j.model.animation === '' ? '*' : j.model.animation);
-    }
-    // Neues Schema (Editor)
-    if (j?.animation) {
-      const a = j.animation;
-      if (a.clipName != null) cfg.animationName = (a.clipName === '' ? '*' : a.clipName);
-      if (a.loop != null)     cfg.animLoop = !!a.loop;
-      if (a.repeats != null)  cfg.animIterations = Math.max(0, parseInt(a.repeats,10)||0) || 9999;
-      if (a.start)            cfg.animStart = String(a.start).toLowerCase(); // onstart/onplace/onclick
-    }
-
-    log('Scene animation cfg', {
-      animationName: cfg.animationName,
-      animLoop: cfg.animLoop,
-      animIterations: cfg.animIterations,
-      animStart: cfg.animStart
-    });
-  }catch(e){
-    console.warn(e);
-    showErr('scene.json konnte nicht geladen werden:\n'+e.message);
+// Resolve relative URLs against __base
+function resolveUrl(url) {
+  if (!url) return url;
+  if (isHttp(url) || isDataOrBlob(url)) return url;
+  if (__base) {
+    try { return new URL(url, __base).href; } catch {}
   }
+  return url;
 }
 
-// -------- Fallbacks aus Query --------
-function applyQueryFallback(){
-  const glb = qs.get('glb');
-  if (glb) cfg.modelUrl = glb;
+// 2) normalizeCfg(): backfills + defaults
+function normalizeCfg(raw) {
+  const c = {
+    meta: raw.meta || {},
+    model: raw.model || {},
+    animation: raw.animation || {},
+    audio: raw.audio || {},
+    ui: raw.ui || {}
+  };
 
-  const rx = qs.get('rx'), ry = qs.get('ry'), rz = qs.get('rz');
-  if (rx!=null || ry!=null || rz!=null){
-    cfg.rotation = [rad2deg(parseFloat(rx)), rad2deg(parseFloat(ry)), rad2deg(parseFloat(rz))].map(v=>isFinite(v)?v:0);
+  // Backfill legacy fields
+  if (!c.audio.url && raw.audio?.src) c.audio.url = raw.audio.src;
+  if (!c.ui.welcome) c.ui.welcome = {};
+  if (!c.ui.welcome.poster && raw.target?.previewUrl) c.ui.welcome.poster = raw.target.previewUrl;
+
+  // Resolve URLs
+  if (c.model.url) c.model.url = resolveUrl(c.model.url);
+  if (c.model.usdzUrl) c.model.usdzUrl = resolveUrl(c.model.usdzUrl);
+  if (c.audio.url) c.audio.url = resolveUrl(c.audio.url);
+  if (c.ui.welcome.poster) c.ui.welcome.poster = resolveUrl(c.ui.welcome.poster);
+
+  // Defaults
+  if (!c.model.scale) c.model.scale = 1.0;
+  if (!c.animation.start) c.animation.start = 'onPlace';
+  if (!c.animation.clipName) c.animation.clipName = '*';
+  if (c.animation.loop == null) c.animation.loop = true;
+  if (!c.animation.iterations) c.animation.iterations = 9999;
+  if (!c.audio.autoplay) c.audio.autoplay = 'withAnimation';
+  if (c.audio.loop == null) c.audio.loop = true;
+  if (!c.audio.volume) c.audio.volume = 0.85;
+
+  log('Normalized config:', c);
+  return c;
+}
+
+// 3) Poster/Welcome overlay and session start
+function setupWelcomeScreen() {
+  const welcome = document.getElementById('welcome');
+  const poster = document.getElementById('welcomePoster');
+  const eyebrow = document.getElementById('welcomeEyebrow');
+  const title = document.getElementById('welcomeTitle');
+  const desc = document.getElementById('welcomeDesc');
+  const btn = document.getElementById('welcomeBtn');
+  const nativeCta = document.getElementById('nativeCta');
+  const diagnostics = document.getElementById('diagnostics');
+
+  // Check if we have backwards compat mode (no welcome config)
+  if (!cfg.ui?.welcome || (!cfg.ui.welcome.poster && !cfg.ui.welcome.title && !cfg.ui.welcome.desc)) {
+    // Backwards compatibility: no welcome screen, just show start button
+    welcome.classList.add('hidden');
+    document.getElementById('enter').style.display = 'block';
+    document.getElementById('enter').addEventListener('click', startAR);
+    return;
   }
 
-  const px = parseFloat(qs.get('px')), py = parseFloat(qs.get('py')), pz = parseFloat(qs.get('pz'));
-  if ([px,py,pz].some(v=>!isNaN(v))) cfg.position = [px||0, py||0, pz||0];
+  // Populate welcome screen
+  if (cfg.ui.welcome.poster) {
+    poster.src = cfg.ui.welcome.poster;
+    poster.style.display = 'block';
+  }
+  if (cfg.ui.welcome.eyebrow) eyebrow.textContent = cfg.ui.welcome.eyebrow;
+  if (cfg.ui.welcome.title) title.textContent = cfg.ui.welcome.title;
+  if (cfg.ui.welcome.desc) desc.textContent = cfg.ui.welcome.desc;
 
-  const sx = parseFloat(qs.get('sx')), sy = parseFloat(qs.get('sy')), sz = parseFloat(qs.get('sz'));
-  if ([sx,sy,sz].some(v=>!isNaN(v))) cfg.scale = [sx||1, sy||1, sz||1];
+  // Check WebXR support
+  checkWebXRSupport().then(supported => {
+    if (supported) {
+      btn.addEventListener('click', () => {
+        welcome.classList.add('hidden');
+        startAR();
+      });
+    } else {
+      // 5) iOS/non-WebXR fallback with diagnostics and native CTA
+      btn.style.display = 'none';
+      diagnostics.textContent = 'WebXR is not supported on this device/browser.';
+      diagnostics.style.display = 'block';
+      
+      const nativeCfg = cfg.ui.welcome.nativeCta || 'ios-only';
+      const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+      const hasUsdz = cfg.model.usdzUrl;
+      
+      if (hasUsdz && (nativeCfg === 'always' || (nativeCfg === 'ios-only' && isIOS))) {
+        nativeCta.style.display = 'block';
+        nativeCta.addEventListener('click', () => {
+          if (isIOS) {
+            // iOS Quick Look
+            const a = document.createElement('a');
+            a.rel = 'ar';
+            a.href = cfg.model.usdzUrl;
+            a.click();
+          } else {
+            // Android Scene Viewer Intent
+            const intent = `intent://arvr.google.com/scene-viewer/1.0?file=${encodeURIComponent(cfg.model.usdzUrl)}#Intent;scheme=https;package=com.google.android.googlequicksearchbox;action=android.intent.action.VIEW;S.browser_fallback_url=https://developers.google.com/ar;end;`;
+            window.location.href = intent;
+          }
+        });
+      }
+    }
+  });
+}
 
-  const an = (qs.get('anim') || '').trim();
-  if (an) cfg.animationName = an;
+async function checkWebXRSupport() {
+  if (!navigator.xr) return false;
+  try {
+    return await navigator.xr.isSessionSupported('immersive-ar');
+  } catch {
+    return false;
+  }
 }
 
 // ---------- THREE Init ----------
@@ -175,6 +289,22 @@ function init() {
   renderer.toneMappingExposure = 1.0;
   document.body.appendChild(renderer.domElement);
 
+  // Audio setup
+  if (cfg.audio?.url) {
+    audioListener = new THREE.AudioListener();
+    camera.add(audioListener);
+    audio = new THREE.Audio(audioListener);
+    const audioLoader = new THREE.AudioLoader();
+    audioLoader.load(cfg.audio.url, (buffer) => {
+      audio.setBuffer(buffer);
+      audio.setLoop(cfg.audio.loop);
+      audio.setVolume(cfg.audio.volume);
+      log('Audio loaded:', cfg.audio.url);
+    }, undefined, (err) => {
+      console.warn('Audio load failed:', err);
+    });
+  }
+
   // Reticle
   const ring = new THREE.RingGeometry(0.07, 0.08, 32).rotateX(-Math.PI/2);
   const mat = new THREE.MeshBasicMaterial({color:0x66ccff});
@@ -188,53 +318,138 @@ function init() {
   scene.add(controller);
 
   addEventListener('resize', ()=>{
-  // Während XR presenting NICHT setSize aufrufen – das macht Three im XR-Loop selbst
-  if (!renderer.xr.isPresenting) {
-    renderer.setSize(innerWidth, innerHeight);
+    // Während XR presenting NICHT setSize aufrufen – das macht Three im XR-Loop selbst
+    if (!renderer.xr.isPresenting) {
+      renderer.setSize(innerWidth, innerHeight);
+    }
+  });
+
+  setupHUD();
+  setupWelcomeScreen();
+}
+
+// 9) HUD (DOM overlay) setup
+function setupHUD() {
+  const hud = document.getElementById('hud');
+  const btnScaleUp = document.getElementById('btnScaleUp');
+  const btnScaleDown = document.getElementById('btnScaleDown');
+  const btnRotLeft = document.getElementById('btnRotLeft');
+  const btnRotRight = document.getElementById('btnRotRight');
+  const btnReset = document.getElementById('btnReset');
+  const btnPlay = document.getElementById('btnPlay');
+  const btnMute = document.getElementById('btnMute');
+
+  // Scale buttons
+  btnScaleUp.addEventListener('click', () => {
+    if (!model) return;
+    model.scale.multiplyScalar(1.1);
+  });
+
+  btnScaleDown.addEventListener('click', () => {
+    if (!model) return;
+    model.scale.multiplyScalar(0.9);
+  });
+
+  // Rotate buttons
+  btnRotLeft.addEventListener('click', () => {
+    if (!model) return;
+    model.rotation.y -= Math.PI / 12; // -15 degrees
+  });
+
+  btnRotRight.addEventListener('click', () => {
+    if (!model) return;
+    model.rotation.y += Math.PI / 12; // +15 degrees
+  });
+
+  // Reset button - return to pre-placement ghost state
+  btnReset.addEventListener('click', () => {
+    if (!model) return;
+    placed = false;
+    scene.remove(model);
+    model = null;
+    if (ghost) ghost.visible = true;
+    hud.style.display = 'none';
+    if (mixer) {
+      mixer.stopAllAction();
+      mixer = null;
+    }
+    if (audio && audio.isPlaying) audio.stop();
+  });
+
+  // Play/Pause button - only visible when animation.start == "manual"
+  if (cfg.animation?.start === 'manual') {
+    btnPlay.style.display = 'block';
+    btnPlay.addEventListener('click', () => {
+      if (!mixer) return;
+      if (!mixer._started) {
+        startSelectedClip();
+        mixer._started = true;
+      } else {
+        // Toggle time scale
+        mixer.timeScale = mixer.timeScale === 0 ? 1 : 0;
+        
+        // Sync audio with animation
+        if (audio && cfg.audio.autoplay === 'withAnimation') {
+          if (mixer.timeScale === 1 && !audio.isPlaying) {
+            audio.play();
+          } else if (mixer.timeScale === 0 && audio.isPlaying) {
+            audio.pause();
+          }
+        }
+      }
+    });
   }
-});
-  document.getElementById('enter').addEventListener('click', startAR);
+
+  // Mute button - only if audio exists
+  if (cfg.audio?.url) {
+    btnMute.style.display = 'block';
+    let muted = false;
+    btnMute.addEventListener('click', () => {
+      if (!audio) return;
+      muted = !muted;
+      audio.setVolume(muted ? 0 : cfg.audio.volume);
+      btnMute.textContent = muted ? 'Unmute' : 'Mute';
+    });
+  }
 }
 
 // ---------- Animation helpers ----------
-function startSelectedClip(){
+function startSelectedClip() {
   if (!mixer || !clips.length) return;
-  const sel = (cfg.animationName ?? '*');
+  const sel = (cfg.animation.clipName || '*');
   if (sel === 'none') { log('Animation: none'); return; }
 
   // Clip wählen
-  const clip = (sel === '*') ? clips[0] : (clips.find(c=>c.name===sel) || clips[0]);
+  const clip = (sel === '*') ? clips[0] : (clips.find(c => c.name === sel) || clips[0]);
   if (!clip) { log('Keine Clips im GLB'); return; }
 
   mixer.stopAllAction();
   const act = mixer.clipAction(clip);
-  if (cfg.animLoop){
-    act.setLoop(THREE.LoopRepeat, cfg.animIterations || 9999);
+  if (cfg.animation.loop) {
+    act.setLoop(THREE.LoopRepeat, cfg.animation.iterations || 9999);
   } else {
     act.setLoop(THREE.LoopOnce, 0);
     act.clampWhenFinished = true;
   }
   act.reset().play();
   mixer.timeScale = 1;
-  log('Animation gestartet', { name: clip.name, loop: cfg.animLoop, iters: cfg.animIterations });
+  log('Animation gestartet', { name: clip.name, loop: cfg.animation.loop, iters: cfg.animation.iterations });
+
+  // Sync audio with animation
+  if (audio && cfg.audio.autoplay === 'withAnimation') {
+    if (!audio.isPlaying) audio.play();
+  }
 }
 
-function ensureHudForOnClick(){
-  if (cfg.animStart !== 'onclick') return;
-  const hud = document.getElementById('hud');
-  const btn = document.getElementById('btnPlay');
-  hud.style.display = 'flex';
-  btn.onclick = ()=>{
-    if (!mixer) return;
-    // Beim ersten Klick ggf. den Clip initial starten
-    if (mixer.timeScale == null || (mixer._startedOnce!==true && clips.length)){
-      startSelectedClip();
-      mixer._startedOnce = true;
-      return;
-    }
-    // Danach togglen
-    mixer.timeScale = (mixer.timeScale === 0) ? 1 : 0;
-  };
+function stopAnimation() {
+  if (!mixer) return;
+  mixer.stopAllAction();
+  mixer.timeScale = 0;
+  
+  // Sync audio with animation
+  if (audio && cfg.audio.autoplay === 'withAnimation' && audio.isPlaying) {
+    audio.stop();
+  }
 }
 
 /* ---------- GLB/GLTF Loader ---------- */
@@ -268,67 +483,176 @@ async function loadGLTFFlexible(url) {
   }
 }
 
+// 4) Placement: Load ghost model on session start
+async function loadGhostModel() {
+  if (!cfg.model?.url) return;
+  
+  try {
+    const gltf = await loadGLTFFlexible(cfg.model.url);
+    ghost = gltf.scene.clone();
+    
+    // Apply scale
+    const scale = cfg.model.scale || 1.0;
+    ghost.scale.set(scale, scale, scale);
+    initialScale = scale;
+    
+    // Make semi-transparent
+    ghost.traverse((child) => {
+      if (child.isMesh) {
+        if (Array.isArray(child.material)) {
+          child.material = child.material.map(mat => {
+            const m = mat.clone();
+            m.transparent = true;
+            m.opacity = 0.5;
+            return m;
+          });
+        } else {
+          child.material = child.material.clone();
+          child.material.transparent = true;
+          child.material.opacity = 0.5;
+        }
+      }
+    });
+    
+    ghost.visible = false;
+    scene.add(ghost);
+    
+    // Store clips for later
+    clips = gltf.animations || [];
+    log('GLB Clips', clips.map(c => ({ name: c.name, dur: c.duration.toFixed(2) })));
+    
+    // Start animation if mode is "onStart"
+    if (cfg.animation?.start === 'onStart' && clips.length) {
+      // We'll start the animation after placing the actual model
+      log('Animation start mode: onStart (will start after model loads)');
+    }
+    
+    // Start audio if autoplay is "onStart"
+    if (audio && cfg.audio.autoplay === 'onStart') {
+      audio.play();
+      log('Audio autoplay: onStart');
+    }
+  } catch (err) {
+    console.error('Ghost model load failed', err);
+    showErr('Fehler beim Laden des Modells:\n' + (err?.message || err || 'Unbekannt'));
+  }
+}
+
 /* ---------- Tap: platzieren & laden ---------- */
 async function onSelect() {
   if (!reticle.visible) return;
 
-  if (!model) {
+  if (!model && !placed) {
+    // First placement - convert ghost to real model
+    if (!ghost) {
+      showErr('Modell konnte nicht geladen werden.');
+      return;
+    }
+    
     try {
-      const gltf = await loadGLTFFlexible(cfg.modelUrl);
+      // Load the actual model
+      const gltf = await loadGLTFFlexible(cfg.model.url);
       model = gltf.scene;
-      const [sx,sy,sz] = cfg.scale;    model.scale.set(sx,sy,sz);
-      const [rx,ry,rz] = cfg.rotation; model.rotation.set(deg2rad(rx), deg2rad(ry), deg2rad(rz));
+      
+      // Apply scale
+      const scale = cfg.model.scale || 1.0;
+      model.scale.set(scale, scale, scale);
+      
+      // Position at reticle
       model.position.setFromMatrixPosition(reticle.matrix);
       scene.add(model);
-
-      clips = gltf.animations || [];
-      log('GLB Clips', clips.map(c=>({name:c.name,dur:c.duration.toFixed(2)})));
+      
+      // Hide ghost
+      if (ghost) ghost.visible = false;
+      placed = true;
+      
+      // Show HUD after placement
+      document.getElementById('hud').style.display = 'flex';
+      
+      // Setup animation
       if (clips.length) {
         mixer = new THREE.AnimationMixer(model);
-        // Autostart: onPlace oder onStart → direkt nach Platzierung starten
-        if (cfg.animStart === 'onplace' || cfg.animStart === 'onstart') {
+        
+        // Start animation based on mode
+        if (cfg.animation?.start === 'onPlace') {
           startSelectedClip();
-        } else if (cfg.animStart === 'onclick') {
-          ensureHudForOnClick();
+        } else if (cfg.animation?.start === 'onStart') {
+          // onStart means as soon as session starts and model loads - so start now
+          startSelectedClip();
+        } else if (cfg.animation?.start === 'manual') {
+          // Manual mode - user controls via HUD
+          log('Animation mode: manual (use HUD to control)');
         }
       } else {
         log('Keine Animationen im Modell gefunden.');
       }
+      
+      // Audio autoplay handling
+      if (audio && cfg.audio.autoplay === 'withAnimation' && cfg.animation?.start !== 'manual') {
+        // Audio starts with animation for non-manual modes
+        if (!audio.isPlaying) audio.play();
+      }
     } catch (err) {
-      console.error('GLTF load failed', err);
+      console.error('Model load failed', err);
       showErr('Fehler beim Laden des Objekts:\n' + (err?.message || err || 'Unbekannt'));
     }
-  } else {
+  } else if (model) {
+    // Reposition existing model
     model.position.setFromMatrixPosition(reticle.matrix);
   }
 }
 
 // ---------- WebXR ----------
-async function startAR(){
+async function startAR() {
   if (!navigator.xr) { showErr('WebXR nicht verfügbar.'); return; }
-  const isARSupported = await navigator.xr.isSessionSupported('immersive-ar');
-  if (!isARSupported) { showErr('Dein Gerät/Browser unterstützt kein WebXR-AR.'); return; }
+  try {
+    const isARSupported = await navigator.xr.isSessionSupported('immersive-ar');
+    if (!isARSupported) { showErr('Dein Gerät/Browser unterstützt kein WebXR-AR.'); return; }
 
-  const session = await navigator.xr.requestSession('immersive-ar', { requiredFeatures: ['hit-test','local-floor'] });
-  renderer.xr.setReferenceSpaceType('local-floor');
-  await renderer.xr.setSession(session);
-  document.getElementById('enter').style.display='none';
-  animate();
+    // Request session with DOM overlay for HUD
+    const session = await navigator.xr.requestSession('immersive-ar', {
+      requiredFeatures: ['hit-test', 'local-floor'],
+      optionalFeatures: ['dom-overlay'],
+      domOverlay: { root: document.body }
+    });
+    
+    renderer.xr.setReferenceSpaceType('local-floor');
+    await renderer.xr.setSession(session);
+    
+    // Load ghost model once session starts
+    await loadGhostModel();
+    
+    animate();
+  } catch (err) {
+    console.error('XR session failed', err);
+    showErr('WebXR-Sitzung konnte nicht gestartet werden:\n' + (err?.message || err));
+  }
 }
 
 function animate() { renderer.setAnimationLoop(render); }
 
 function render(t, frame) {
-  const dt = clock.getDelta(); if (mixer) mixer.update(dt);
-  if (!frame){ renderer.render(scene, camera); return; }
+  const dt = clock.getDelta(); 
+  if (mixer) mixer.update(dt);
+  
+  if (!frame) { 
+    renderer.render(scene, camera); 
+    return; 
+  }
+  
   const referenceSpace = renderer.xr.getReferenceSpace();
   const session = renderer.xr.getSession();
 
   if (!hitTestSourceRequested) {
     session.requestReferenceSpace('viewer').then((viewerSpace) => {
-      session.requestHitTestSource({ space: viewerSpace }).then((source) => { hitTestSource = source; });
+      session.requestHitTestSource({ space: viewerSpace }).then((source) => { 
+        hitTestSource = source; 
+      });
     });
-    session.addEventListener('end', () => { hitTestSourceRequested = false; hitTestSource = null; });
+    session.addEventListener('end', () => { 
+      hitTestSourceRequested = false; 
+      hitTestSource = null; 
+    });
     hitTestSourceRequested = true;
   }
 
@@ -339,17 +663,32 @@ function render(t, frame) {
       const pose = hit.getPose(referenceSpace);
       reticle.visible = true;
       reticle.matrix.fromArray(pose.transform.matrix);
-    } else { reticle.visible = false; }
+      
+      // Update ghost position if not placed yet
+      if (ghost && !placed) {
+        ghost.visible = true;
+        ghost.position.setFromMatrixPosition(reticle.matrix);
+      }
+    } else { 
+      reticle.visible = false;
+      if (ghost && !placed) ghost.visible = false;
+    }
   }
 
   renderer.render(scene, camera);
 }
 
 // ---------- Boot ----------
-(async ()=>{
-  try{ await loadScene(); }catch(e){ console.warn(e); }
-  applyQueryFallback();
-  init();
+(async () => {
+  try {
+    const rawCfg = await loadConfig();
+    cfg = normalizeCfg(rawCfg);
+    log('Final config:', cfg);
+    init();
+  } catch (e) {
+    console.error('Boot failed:', e);
+    showErr('Initialisierung fehlgeschlagen:\n' + (e?.message || e));
+  }
 })();
 </script>
 </body>
