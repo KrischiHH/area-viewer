@@ -64,7 +64,7 @@ import { GLTFLoader }  from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 
 let camera, scene, renderer, reticle, controller, hitTestSource=null, hitTestSourceRequested=false;
-let model=null, ghost=null, mixer=null, clips=[], audioListener=null, audio=null;
+let model=null, ghost=null, mixer=null, clips=[], audioListener=null, audio=null, loadedGltf=null;
 const clock = new THREE.Clock();
 let cfg = null; // Will be populated by loadConfig + normalizeCfg
 let __base = ''; // Base URL for resolving relative paths
@@ -123,7 +123,8 @@ async function loadConfig() {
   } else if (isHttp(sceneParam)) {
     // URL - fetch scene.json
     try {
-      const srcUrl = decodeURIComponent(sceneParam);
+      // URLSearchParams already decodes the parameter, so don't decode again
+      const srcUrl = sceneParam;
       const r = await fetch(srcUrl, {cache:'no-cache', mode:'cors'});
       if (!r.ok) throw new Error('HTTP ' + r.status + ' ' + r.statusText);
       const json = await r.json();
@@ -393,7 +394,7 @@ function setupHUD() {
           if (mixer.timeScale === 1 && !audio.isPlaying) {
             audio.play();
           } else if (mixer.timeScale === 0 && audio.isPlaying) {
-            audio.pause();
+            audio.stop();
           }
         }
       }
@@ -488,8 +489,8 @@ async function loadGhostModel() {
   if (!cfg.model?.url) return;
   
   try {
-    const gltf = await loadGLTFFlexible(cfg.model.url);
-    ghost = gltf.scene.clone();
+    loadedGltf = await loadGLTFFlexible(cfg.model.url);
+    ghost = loadedGltf.scene.clone();
     
     // Apply scale
     const scale = cfg.model.scale || 1.0;
@@ -518,7 +519,7 @@ async function loadGhostModel() {
     scene.add(ghost);
     
     // Store clips for later
-    clips = gltf.animations || [];
+    clips = loadedGltf.animations || [];
     log('GLB Clips', clips.map(c => ({ name: c.name, dur: c.duration.toFixed(2) })));
     
     // Start animation if mode is "onStart"
@@ -544,15 +545,14 @@ async function onSelect() {
 
   if (!model && !placed) {
     // First placement - convert ghost to real model
-    if (!ghost) {
+    if (!loadedGltf) {
       showErr('Modell konnte nicht geladen werden.');
       return;
     }
     
     try {
-      // Load the actual model
-      const gltf = await loadGLTFFlexible(cfg.model.url);
-      model = gltf.scene;
+      // Use the already loaded GLTF
+      model = loadedGltf.scene.clone();
       
       // Apply scale
       const scale = cfg.model.scale || 1.0;
@@ -576,9 +576,12 @@ async function onSelect() {
         // Start animation based on mode
         if (cfg.animation?.start === 'onPlace') {
           startSelectedClip();
+          log('Animation started: onPlace mode');
         } else if (cfg.animation?.start === 'onStart') {
-          // onStart means as soon as session starts and model loads - so start now
+          // onStart means start as soon as session starts (after model loads)
+          // Since we're placing after session start, start now
           startSelectedClip();
+          log('Animation started: onStart mode (after placement)');
         } else if (cfg.animation?.start === 'manual') {
           // Manual mode - user controls via HUD
           log('Animation mode: manual (use HUD to control)');
@@ -593,8 +596,8 @@ async function onSelect() {
         if (!audio.isPlaying) audio.play();
       }
     } catch (err) {
-      console.error('Model load failed', err);
-      showErr('Fehler beim Laden des Objekts:\n' + (err?.message || err || 'Unbekannt'));
+      console.error('Model placement failed', err);
+      showErr('Fehler beim Platzieren des Objekts:\n' + (err?.message || err || 'Unbekannt'));
     }
   } else if (model) {
     // Reposition existing model
@@ -664,10 +667,14 @@ function render(t, frame) {
       reticle.visible = true;
       reticle.matrix.fromArray(pose.transform.matrix);
       
-      // Update ghost position if not placed yet
+      // Update ghost position and rotation if not placed yet
       if (ghost && !placed) {
         ghost.visible = true;
-        ghost.position.setFromMatrixPosition(reticle.matrix);
+        ghost.matrix.fromArray(pose.transform.matrix);
+        ghost.matrix.decompose(ghost.position, ghost.quaternion, ghost.scale);
+        // Restore the configured scale
+        const scale = cfg.model.scale || 1.0;
+        ghost.scale.set(scale, scale, scale);
       }
     } else { 
       reticle.visible = false;
