@@ -244,21 +244,23 @@ function setupWelcomeScreen() {
       const nativeCfg = cfg.ui.welcome.nativeCta || 'ios-only';
       const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
       const hasUsdz = cfg.model.usdzUrl;
+      const hasGlb = cfg.model.url;
       
-      if (hasUsdz && (nativeCfg === 'always' || (nativeCfg === 'ios-only' && isIOS))) {
+      if ((hasUsdz || hasGlb) && (nativeCfg === 'always' || (nativeCfg === 'ios-only' && isIOS))) {
         nativeCta.style.display = 'block';
         nativeCta.addEventListener('click', () => {
-          if (isIOS) {
-            // iOS Quick Look
+          if (isIOS && hasUsdz) {
+            // iOS Quick Look - prefers USDZ
             const a = document.createElement('a');
             a.rel = 'ar';
             a.href = cfg.model.usdzUrl;
             a.click();
-          } else {
-            // Android Scene Viewer Intent
-            const intent = `intent://arvr.google.com/scene-viewer/1.0?file=${encodeURIComponent(cfg.model.usdzUrl)}#Intent;scheme=https;package=com.google.android.googlequicksearchbox;action=android.intent.action.VIEW;S.browser_fallback_url=https://developers.google.com/ar;end;`;
+          } else if (hasGlb) {
+            // Android Scene Viewer Intent - uses GLB
+            const intent = `intent://arvr.google.com/scene-viewer/1.0?file=${encodeURIComponent(cfg.model.url)}#Intent;scheme=https;package=com.google.android.googlequicksearchbox;action=android.intent.action.VIEW;S.browser_fallback_url=https://developers.google.com/ar;end;`;
             window.location.href = intent;
           }
+        });
         });
       }
     }
@@ -374,7 +376,9 @@ function setupHUD() {
       mixer.stopAllAction();
       mixer = null;
     }
-    if (audio && audio.isPlaying) audio.stop();
+    if (audio && audio.isPlaying) {
+      try { audio.stop(); } catch (e) { console.warn('Audio stop failed:', e); }
+    }
   });
 
   // Play/Pause button - only visible when animation.start == "manual"
@@ -392,9 +396,9 @@ function setupHUD() {
         // Sync audio with animation
         if (audio && cfg.audio.autoplay === 'withAnimation') {
           if (mixer.timeScale === 1 && !audio.isPlaying) {
-            audio.play();
+            try { audio.play(); } catch (e) { console.warn('Audio play failed:', e); }
           } else if (mixer.timeScale === 0 && audio.isPlaying) {
-            audio.stop();
+            try { audio.stop(); } catch (e) { console.warn('Audio stop failed:', e); }
           }
         }
       }
@@ -438,7 +442,9 @@ function startSelectedClip() {
 
   // Sync audio with animation
   if (audio && cfg.audio.autoplay === 'withAnimation') {
-    if (!audio.isPlaying) audio.play();
+    if (!audio.isPlaying) {
+      try { audio.play(); } catch (e) { console.warn('Audio play failed:', e); }
+    }
   }
 }
 
@@ -449,7 +455,7 @@ function stopAnimation() {
   
   // Sync audio with animation
   if (audio && cfg.audio.autoplay === 'withAnimation' && audio.isPlaying) {
-    audio.stop();
+    try { audio.stop(); } catch (e) { console.warn('Audio stop failed:', e); }
   }
 }
 
@@ -530,7 +536,7 @@ async function loadGhostModel() {
     
     // Start audio if autoplay is "onStart"
     if (audio && cfg.audio.autoplay === 'onStart') {
-      audio.play();
+      try { audio.play(); } catch (e) { console.warn('Audio play failed:', e); }
       log('Audio autoplay: onStart');
     }
   } catch (err) {
@@ -593,7 +599,9 @@ async function onSelect() {
       // Audio autoplay handling
       if (audio && cfg.audio.autoplay === 'withAnimation' && cfg.animation?.start !== 'manual') {
         // Audio starts with animation for non-manual modes
-        if (!audio.isPlaying) audio.play();
+        if (!audio.isPlaying) {
+          try { audio.play(); } catch (e) { console.warn('Audio play failed:', e); }
+        }
       }
     } catch (err) {
       console.error('Model placement failed', err);
