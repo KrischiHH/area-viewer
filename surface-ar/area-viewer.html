@@ -1,355 +1,518 @@
 <!doctype html>
 <html lang="de">
 <head>
-<meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>ARea Viewer – WebXR Hit-Test (mit Animation)</title>
-<style>
-  html,body{margin:0;height:100%;overflow:hidden;background:#000;color:#fff;font-family:system-ui}
-  #enter{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);padding:12px 18px;border-radius:12px;border:1px solid #555;background:#111;color:#fff}
-  #msg{position:fixed;left:12px;bottom:12px;opacity:.9}
-  #err{position:fixed;left:12px;top:12px;z-index:9;background:#b00020;color:#fff;padding:8px 10px;border-radius:8px;display:none;font:12px/1.35 monospace;max-width:min(92vw,680px);white-space:pre-wrap}
-  #badge{position:fixed;right:12px;top:12px;z-index:9;background:#0b1220;color:#9cf;padding:6px 8px;border-radius:8px;font:12px system-ui}
-  #hud{position:fixed;right:12px;bottom:12px;z-index:9;display:none;gap:8px;background:rgba(0,0,0,.4);border:1px solid rgba(255,255,255,.15);padding:6px;border-radius:12px;backdrop-filter:blur(6px)}
-  #hud button{all:unset;cursor:pointer;color:#fff;padding:8px 12px;border-radius:10px;border:1px solid rgba(255,255,255,.2);background:#111}
-</style>
-<script type="importmap">
-{
-  "imports": {
-    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
-    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
+  <title>ARea Viewer – Surface AR (Animation + Audio)</title>
+  <style>
+    html,body{margin:0;height:100%;overflow:hidden;background:#000;color:#fff;font-family:system-ui}
+    canvas{display:block}
+    /* Poster / Welcome Overlay */
+    #overlay{position:fixed;inset:0;z-index:20;display:none;align-items:center;justify-content:center;background:#0b1220}
+    .card{max-width:min(680px,92vw);display:grid;gap:12px}
+    .poster{width:100%;aspect-ratio:16/9;object-fit:cover;border-radius:12px;border:1px solid #22314d;background:#111}
+    .eyebrow{color:#9cf;font-weight:700;font-size:12px}
+    .title{font-weight:900;font-size:20px}
+    .desc{opacity:.9}
+    .row{display:flex;gap:8px}
+    .btn{all:unset;cursor:pointer;color:#fff;padding:10px 14px;border-radius:10px;border:1px solid #22314d;background:#0f1626}
+    .btn.primary{border-color:#6ea8ff}
+    /* HUD */
+    #hud{position:fixed;left:12px;bottom:12px;z-index:12;display:none;gap:8px;background:rgba(15,22,38,.88);border:1px solid #22314d;padding:6px;border-radius:12px;backdrop-filter:blur(6px)}
+    #hud button{all:unset;cursor:pointer;color:#fff;padding:8px 12px;border-radius:10px;border:1px solid #22314d;background:#0f1626}
+    #hud button.danger{border-color:#ff8585}
+    #badge{position:fixed;right:12px;top:12px;z-index:9;background:#0b1220;color:#9cf;padding:6px 8px;border-radius:8px;font:12px system-ui}
+    #err{position:fixed;left:12px;top:12px;z-index:30;background:#b00020;color:#fff;padding:8px 10px;border-radius:8px;display:none;font:12px/1.35 monospace;max-width:min(92vw,680px);white-space:pre-wrap}
+    /* Hint vor Platzierung */
+    #hint{position:fixed;left:12px;bottom:12px;z-index:10;background:#0b1220bd;border:1px solid #22314d;color:#9fc;padding:8px 10px;border-radius:10px;display:none}
+  </style>
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+    }
   }
-}
-</script>
+  </script>
 </head>
 <body>
   <div id="err"></div>
-  <button id="enter">Start AR</button>
-  <div id="msg">Android Chrome empfohlen · Tippe auf den Boden, um das Modell zu platzieren</div>
   <div id="badge">WEBXR BUILD</div>
-  <div id="hud"><button id="btnPlay">Play/Pause</button></div>
+
+  <!-- Poster / Welcome -->
+  <div id="overlay">
+    <div class="card">
+      <img id="ovPoster" class="poster" alt="">
+      <div class="eyebrow" id="ovEyebrow"></div>
+      <div class="title" id="ovTitle"></div>
+      <div class="desc" id="ovDesc"></div>
+      <div class="row">
+        <button class="btn primary" id="ovStart">OK · In AR starten</button>
+        <button class="btn" id="ovNative" style="display:none">In nativer AR öffnen</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Hint vor Platzierung -->
+  <div id="hint">Bewege das Gerät, richte auf den Boden und tippe zum Platzieren.</div>
+
+  <!-- HUD -->
+  <div id="hud">
+    <button id="btnScaleM">Scale −10%</button>
+    <button id="btnScaleP">Scale +10%</button>
+    <button id="btnRotM">Rotate −15°</button>
+    <button id="btnRotP">Rotate +15°</button>
+    <button id="btnReset">Reset</button>
+    <button id="btnPlay" style="display:none">Play/Pause</button>
+    <button id="btnMute" style="display:none">Mute</button>
+  </div>
 
 <script type="module">
 import * as THREE from 'three';
 import { GLTFLoader }  from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 
-let camera, scene, renderer, reticle, controller, hitTestSource=null, hitTestSourceRequested=false;
-let model=null, mixer=null, clips=[];
-const clock = new THREE.Clock();
-
-const showErr = (m)=>{ const el=document.getElementById('err'); el.textContent=m; el.style.display='block'; console.error(m); };
-const log = (...a)=>{ try{ console.log('[area-viewer]', ...a); }catch{} };
-
-/* ========= Param-Normalisierung ========= */
 const qs = new URLSearchParams(location.search);
 const FORCE = (qs.get('force') || '').toLowerCase();
-if (FORCE === 'webxr') {
-  try { document.getElementById('badge').textContent = 'WEBXR (forced)'; } catch {}
-}
-let sceneParam = (qs.get('scene') || qs.get('src') || '').trim();
-const workerBase = (qs.get('base') || 'https://area-publish.area-webar.workers.dev').replace(/\/$/, '');
-const overrideGlb = (qs.get('glb') || '').trim();
+if (FORCE === 'webxr') { try{ document.getElementById('badge').textContent='WEBXR (forced)'; }catch{} }
 
-const isHttp     = u => /^https?:\/\//i.test(u);
-const isDataOrBlob = u => /^data:|^blob:/i.test(u);
-const isGlbLike  = u => /\.(?:glb|gltf)(?:[?#]|$)/i.test(u);
+const showErr = (m)=>{ const el=document.getElementById('err'); el.textContent=m; el.style.display='block'; console.error('[area-viewer]', m); };
+const log = (...a)=>{ console.log('[area-viewer]', ...a); };
 
-let SCENE_GLB = '';
-let SCENE_JSON = '';
+const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform==='MacIntel' && navigator.maxTouchPoints>1);
+const isHttp = (u)=>/^https?:\/\//i.test(u);
+const isDataOrBlob = (u)=>/^data:|^blob:/i.test(u);
 
-if (overrideGlb) {
-  SCENE_GLB = overrideGlb;
-} else if (sceneParam) {
-  if (isDataOrBlob(sceneParam)) {
-    SCENE_JSON = sceneParam;
-  } else if (isHttp(sceneParam)) {
-    if (isGlbLike(sceneParam)) SCENE_GLB = sceneParam;
-    else SCENE_JSON = sceneParam;
-  } else {
-    const id = sceneParam.replace(/\/+$/,'');
-    SCENE_GLB  = `${workerBase}/scenes/${encodeURIComponent(id)}/scene.glb`;
-    SCENE_JSON = `${workerBase}/scenes/${encodeURIComponent(id)}/scene.json`;
-  }
+function resolveRel(u, cfg){
+  if (!u) return '';
+  if (isHttp(u) || isDataOrBlob(u)) return u;
+  const base = cfg?.__base || location.href;
+  try{ return new URL(u, base.replace(/\/?$/, '/')).href; }catch{ return u; }
 }
 
-/* ===== Viewer-Konfig (inkl. Animation) ===== */
-const cfg = {
-  modelUrl: SCENE_GLB || 'https://modelviewer.dev/shared-assets/models/Astronaut.glb',
-  position: [0,0,0],
-  rotation: [0,0,0],  // Grad
-  scale:[0.6,0.6,0.6],
-  // Animation (Editor-kompatibel)
-  animationName: '*',           // '*' | 'none' | Clipname
-  animLoop: true,               // true/false
-  animIterations: 9999,         // Wiederholungen bei LoopRepeat
-  animStart: 'onPlace'          // onPlace | onStart | onClick
-};
-
-// ---------- Utils ----------
-const rad2deg = r => (r||0) * 180/Math.PI;
-const deg2rad = d => (d||0) * Math.PI/180;
-
-// ---------- Szene aus externer JSON (optional) ----------
-async function loadScene(){
-  if (SCENE_GLB) { cfg.modelUrl = SCENE_GLB; return; }
-  if (!SCENE_JSON) return;
-
-  try{
-    const r = await fetch(SCENE_JSON, {cache:'no-cache', mode:'cors'});
-    if(!r.ok) throw new Error('scene.json Load '+r.status+' '+r.statusText);
-    const j = await r.json();
-
-    const resolveAgainstJson = (u)=>{
-      if (!u) return u;
-      if (isHttp(u) || isDataOrBlob(u)) return u;
-      try { return new URL(u, SCENE_JSON).href; } catch { return u; }
-    };
-
-    // Model
-    if (j?.model?.url)                cfg.modelUrl = resolveAgainstJson(j.model.url);
-    if (Array.isArray(j?.model?.position)) cfg.position = j.model.position;
-    if (Array.isArray(j?.model?.rotationDeg)) cfg.rotation = j.model.rotationDeg;
-    else if (Array.isArray(j?.model?.rotation)) cfg.rotation = j.model.rotation;
-    if (Array.isArray(j?.model?.scale)) cfg.scale = j.model.scale;
-    else if (typeof j?.model?.scale === 'number') cfg.scale = [j.model.scale, j.model.scale, j.model.scale];
-
-    // Animation – legacy
-    if (j?.model?.animation != null) {
-      cfg.animationName = (j.model.animation === '' ? '*' : j.model.animation);
-    }
-    // Neues Schema (Editor)
-    if (j?.animation) {
-      const a = j.animation;
-      if (a.clipName != null) cfg.animationName = (a.clipName === '' ? '*' : a.clipName);
-      if (a.loop != null)     cfg.animLoop = !!a.loop;
-      if (a.repeats != null)  cfg.animIterations = Math.max(0, parseInt(a.repeats,10)||0) || 9999;
-      if (a.start)            cfg.animStart = String(a.start).toLowerCase(); // onstart/onplace/onclick
-    }
-
-    log('Scene animation cfg', {
-      animationName: cfg.animationName,
-      animLoop: cfg.animLoop,
-      animIterations: cfg.animIterations,
-      animStart: cfg.animStart
-    });
-  }catch(e){
-    console.warn(e);
-    showErr('scene.json konnte nicht geladen werden:\n'+e.message);
-  }
-}
-
-// -------- Fallbacks aus Query --------
-function applyQueryFallback(){
+/* ===== Config laden ===== */
+async function loadConfig(){
+  // Fallback: reiner GLB-Viewer (?glb=…)
   const glb = qs.get('glb');
-  if (glb) cfg.modelUrl = glb;
+  if (glb) return { __mode:'glb-only', model:{ url:glb }, animation:{}, audio:{}, ui:{} };
 
-  const rx = qs.get('rx'), ry = qs.get('ry'), rz = qs.get('rz');
-  if (rx!=null || ry!=null || rz!=null){
-    cfg.rotation = [rad2deg(parseFloat(rx)), rad2deg(parseFloat(ry)), rad2deg(parseFloat(rz))].map(v=>isFinite(v)?v:0);
+  const src = qs.get('src');
+  if (src){
+    if (src.startsWith('data:')){
+      const after = src.split(',')[1] || '';
+      const text = src.includes(';base64,')
+        ? new TextDecoder().decode(Uint8Array.from(atob(after), c=>c.charCodeAt(0)))
+        : decodeURIComponent(after);
+      const cfg = JSON.parse(text);
+      // best-effort __base aus src data: nicht zuverlässig → none
+      return cfg;
+    }
+    if (isHttp(src)){
+      const r = await fetch(src, { cache:'no-store' });
+      if (!r.ok) throw new Error('scene.json (src) nicht erreichbar');
+      const j = await r.json();
+      try{ const u = new URL(src); j.__base = u.origin + u.pathname.replace(/\/[^\/]*$/, '/'); }catch{}
+      return j;
+    }
+    // URL-encoded JSON
+    const cfg = JSON.parse(decodeURIComponent(src));
+    return cfg;
   }
 
-  const px = parseFloat(qs.get('px')), py = parseFloat(qs.get('py')), pz = parseFloat(qs.get('pz'));
-  if ([px,py,pz].some(v=>!isNaN(v))) cfg.position = [px||0, py||0, pz||0];
-
-  const sx = parseFloat(qs.get('sx')), sy = parseFloat(qs.get('sy')), sz = parseFloat(qs.get('sz'));
-  if ([sx,sy,sz].some(v=>!isNaN(v))) cfg.scale = [sx||1, sy||1, sz||1];
-
-  const an = (qs.get('anim') || '').trim();
-  if (an) cfg.animationName = an;
+  const id   = qs.get('scene') || qs.get('id');
+  const base = (qs.get('base') || '').replace(/\/$/,'');
+  if (!id || !base) throw new Error('Fehlende Parameter: ?scene & ?base erwartet');
+  const root = `${base}/scenes/${encodeURIComponent(id)}`;
+  const r = await fetch(`${root}/scene.json`, { cache:'no-store' });
+  if (!r.ok) throw new Error('scene.json nicht gefunden');
+  const j = await r.json();
+  j.__base = root + '/';
+  return j;
 }
 
-// ---------- THREE Init ----------
-function init() {
-  scene = new THREE.Scene();
-  camera = new THREE.PerspectiveCamera();
-  const hemi = new THREE.HemisphereLight(0xffffff, 0x444444, 1.2); scene.add(hemi);
-  const dir = new THREE.DirectionalLight(0xffffff, 1.0); dir.position.set(0,6,0); scene.add(dir);
+function normalizeCfg(cfg){
+  cfg.meta  = cfg.meta  || {};
+  cfg.model = cfg.model || {};
+  cfg.animation = cfg.animation || {};
+  cfg.audio = cfg.audio || {};
+  cfg.ui = cfg.ui || {};
+  cfg.ui.welcome = cfg.ui.welcome || {};
 
-  renderer = new THREE.WebGLRenderer({antialias:true, alpha:true});
-  renderer.setPixelRatio(window.devicePixelRatio);
-  renderer.setSize(window.innerWidth, window.innerHeight);
-  renderer.xr.enabled = true;
-  renderer.outputColorSpace = THREE.SRGBColorSpace;
-  renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.0;
-  document.body.appendChild(renderer.domElement);
+  // Backfills
+  if (cfg.audio?.src && !cfg.audio.url) cfg.audio.url = cfg.audio.src;
+  if (cfg.target?.previewUrl && !cfg.ui.welcome.poster) cfg.ui.welcome.poster = cfg.target.previewUrl;
 
-  // Reticle
-  const ring = new THREE.RingGeometry(0.07, 0.08, 32).rotateX(-Math.PI/2);
-  const mat = new THREE.MeshBasicMaterial({color:0x66ccff});
-  reticle = new THREE.Mesh(ring, mat);
-  reticle.matrixAutoUpdate = false;
-  reticle.visible = false;
-  scene.add(reticle);
+  // Defaults
+  if (!('start' in cfg.animation)) cfg.animation.start = 'onPlace';
+  if (!('clipName' in cfg.animation)) cfg.animation.clipName = '*';
+  if (!('loop' in cfg.animation)) cfg.animation.loop = true;
+  if (!('iterations' in cfg.animation)) cfg.animation.iterations = 9999;
 
-  controller = renderer.xr.getController(0);
-  controller.addEventListener('select', onSelect);
-  scene.add(controller);
+  if (!('autoplay' in cfg.audio)) cfg.audio.autoplay = 'withAnimation';
+  if (!('loop' in cfg.audio)) cfg.audio.loop = false;
+  if (!('volume' in cfg.audio)) cfg.audio.volume = 0.85;
 
-  addEventListener('resize', ()=>{
-  // Während XR presenting NICHT setSize aufrufen – das macht Three im XR-Loop selbst
+  if (!('scale' in cfg.model)) cfg.model.scale = 1.0;
+
+  // __base für Relativpfade
+  if (!cfg.__base){
+    try{
+      // Wenn model.url oder ui.welcome.poster relativ sind, ohne __base ist Auflösung schwierig.
+      // Bei ?scene=… setzen wir __base bereits in loadConfig(). Hier fallback auf location.
+      cfg.__base = location.href.replace(/\/[^\/]*$/, '/');
+    }catch{}
+  }
+}
+
+/* ===== Native Link ===== */
+function buildNativeLink(cfg){
+  const glb  = resolveRel(cfg.model?.url||'scene.glb', cfg);
+  const usdz = resolveRel(cfg.model?.usdzUrl||'', cfg);
+  if (isIOS && usdz) return usdz; // Quick Look
+  const file = encodeURIComponent(glb);
+  const title = encodeURIComponent(cfg.meta?.title || 'ARea Model');
+  return `intent://arvr.google.com/scene-viewer/1.0?file=${file}&mode=ar_preferred&title=${title}#Intent;scheme=https;package=com.google.android.googlequicksearchbox;end;`;
+}
+
+/* ===== THREE / WebXR Setup ===== */
+const renderer = new THREE.WebGLRenderer({ antialias:true, alpha:true, powerPreference:'high-performance' });
+renderer.setPixelRatio(Math.min(devicePixelRatio||1, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.1;
+document.body.prepend(renderer.domElement);
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(50, innerWidth/innerHeight, 0.01, 50);
+const light = new THREE.HemisphereLight(0xffffff, 0x334466, 1.2); scene.add(light);
+const dir   = new THREE.DirectionalLight(0xffffff, 1.8); dir.position.set(0,3,1); scene.add(dir);
+
+addEventListener('resize', ()=>{
   if (!renderer.xr.isPresenting) {
     renderer.setSize(innerWidth, innerHeight);
+    camera.aspect = innerWidth/innerHeight; camera.updateProjectionMatrix();
   }
 });
-  document.getElementById('enter').addEventListener('click', startAR);
+
+/* Reticle */
+const reticle = new THREE.Mesh(
+  new THREE.RingGeometry(0.09, 0.1, 48).rotateX(-Math.PI/2),
+  new THREE.MeshBasicMaterial({ color:0x88ccff, transparent:true, opacity:0.9 })
+);
+reticle.matrixAutoUpdate = false;
+reticle.visible = false;
+scene.add(reticle);
+
+/* Model + Ghost + Animation + Audio */
+let model=null, mixer=null, clips=[];
+let placed=false;
+let baseScale=1;
+let ghostActive=true;
+const ghostStore = new WeakMap();
+
+const loader = new GLTFLoader();
+const draco = new DRACOLoader(); draco.setDecoderPath('https://www.gstatic.com/draco/v1/decoders/');
+loader.setDRACOLoader(draco);
+
+const listener = new THREE.AudioListener(); camera.add(listener);
+let audio=null; let audioMuted=false;
+
+async function loadModel(cfg){
+  const url = resolveRel(cfg.model?.url||'scene.glb', cfg);
+  const gltf = await loader.loadAsync(url);
+  model = gltf.scene || gltf.scenes?.[0];
+  baseScale = cfg.model?.scale || 1;
+  model.scale.setScalar(baseScale);
+  scene.add(model);
+
+  clips = gltf.animations || [];
+  if (clips.length) {
+    mixer = new THREE.AnimationMixer(model);
+    log('Clips:', clips.map(c=>c.name));
+  } else {
+    log('Keine Animationen im GLB gefunden.');
+  }
+
+  if (cfg.audio?.url){
+    const sound = new THREE.Audio(listener);
+    try{
+      const res = await fetch(resolveRel(cfg.audio.url, cfg)); if (!res.ok) throw new Error(res.status+' '+res.statusText);
+      const buff = await res.arrayBuffer();
+      const abuf = await listener.context.decodeAudioData(buff);
+      sound.setBuffer(abuf);
+      sound.setLoop(!!cfg.audio.loop);
+      sound.setVolume(Number.isFinite(cfg.audio.volume)?cfg.audio.volume:0.85);
+      audio = sound; model.add(sound);
+    }catch(e){ console.warn('Audio konnte nicht geladen werden:', e); }
+  }
+
+  setGhost(true);
 }
 
-// ---------- Animation helpers ----------
-function startSelectedClip(){
-  if (!mixer || !clips.length) return;
-  const sel = (cfg.animationName ?? '*');
-  if (sel === 'none') { log('Animation: none'); return; }
+function setGhost(on){
+  if (!model) return;
+  ghostActive = !!on;
+  model.traverse(obj=>{
+    const m = obj.material;
+    if (!m) return;
+    if (!ghostStore.has(m)) ghostStore.set(m, { transparent:m.transparent, opacity:m.opacity });
+    if (on){
+      m.transparent = true;
+      m.opacity = 0.5;
+    } else {
+      const st = ghostStore.get(m);
+      if (st){ m.transparent = st.transparent; m.opacity = st.opacity; }
+      else { m.transparent=false; m.opacity=1; }
+    }
+    m.needsUpdate = true;
+  });
+}
 
-  // Clip wählen
-  const clip = (sel === '*') ? clips[0] : (clips.find(c=>c.name===sel) || clips[0]);
-  if (!clip) { log('Keine Clips im GLB'); return; }
+function selectClip(cfg){
+  if (!mixer || !clips.length) return null;
+  const want = cfg.animation?.clipName;
+  if (want === 'none' || want === null) return null;
+  if (want && want !== '*'){
+    return clips.find(c=>c.name===want) || clips[0] || null;
+  }
+  return clips[0] || null;
+}
 
+function startAnimation(cfg){
+  if (!mixer) return;
+  const clip = selectClip(cfg);
+  if (!clip) return;
   mixer.stopAllAction();
   const act = mixer.clipAction(clip);
-  if (cfg.animLoop){
-    act.setLoop(THREE.LoopRepeat, cfg.animIterations || 9999);
+  if (cfg.animation?.loop !== false){
+    act.setLoop(THREE.LoopRepeat, cfg.animation?.iterations ?? 9999);
   } else {
     act.setLoop(THREE.LoopOnce, 0);
     act.clampWhenFinished = true;
   }
   act.reset().play();
   mixer.timeScale = 1;
-  log('Animation gestartet', { name: clip.name, loop: cfg.animLoop, iters: cfg.animIterations });
+
+  // Audio koppeln, wenn gewünscht
+  if (cfg.audio?.autoplay === 'withAnimation' && audio && audio.buffer){
+    try{ audio.stop(); }catch{}
+    try{ audio.play(); }catch{}
+  }
+}
+function pauseAnimationAndAudio(cfg){
+  if (mixer) mixer.timeScale = 0;
+  if (cfg.audio?.autoplay === 'withAnimation' && audio?.isPlaying){ try{ audio.stop(); }catch{} }
 }
 
-function ensureHudForOnClick(){
-  if (cfg.animStart !== 'onclick') return;
-  const hud = document.getElementById('hud');
-  const btn = document.getElementById('btnPlay');
-  hud.style.display = 'flex';
-  btn.onclick = ()=>{
-    if (!mixer) return;
-    // Beim ersten Klick ggf. den Clip initial starten
-    if (mixer.timeScale == null || (mixer._startedOnce!==true && clips.length)){
-      startSelectedClip();
-      mixer._startedOnce = true;
-      return;
+/* HUD Controls */
+const hud = {
+  el: document.getElementById('hud'),
+  btnScaleM: document.getElementById('btnScaleM'),
+  btnScaleP: document.getElementById('btnScaleP'),
+  btnRotM:   document.getElementById('btnRotM'),
+  btnRotP:   document.getElementById('btnRotP'),
+  btnReset:  document.getElementById('btnReset'),
+  btnPlay:   document.getElementById('btnPlay'),
+  btnMute:   document.getElementById('btnMute')
+};
+
+/* Overlay */
+const overlay = {
+  el: document.getElementById('overlay'),
+  poster: document.getElementById('ovPoster'),
+  eyebrow: document.getElementById('ovEyebrow'),
+  title: document.getElementById('ovTitle'),
+  desc: document.getElementById('ovDesc'),
+  start: document.getElementById('ovStart'),
+  native: document.getElementById('ovNative')
+};
+const hint = document.getElementById('hint');
+
+/* XR State */
+let xrSession=null, hitTestSource=null;
+
+/* WebXR Start */
+async function startXR(cfg){
+  if (!navigator.xr) throw new Error('WebXR wird in diesem Browser nicht unterstützt.');
+  const session = await navigator.xr.requestSession('immersive-ar', {
+    requiredFeatures: ['hit-test','local-floor'],
+    optionalFeatures: ['dom-overlay'],
+    domOverlay: { root: document.body }
+  });
+  renderer.xr.setReferenceSpaceType('local-floor');
+  await renderer.xr.setSession(session);
+  xrSession = session;
+
+  // viewerSpace + hit-test
+  try{
+    const viewerSpace = await session.requestReferenceSpace('viewer');
+    hitTestSource = await session.requestHitTestSource({ space: viewerSpace });
+  }catch(e){ console.warn('Hit-Test Source nicht verfügbar:', e); }
+
+  // onSelect → Platzieren
+  const controller = renderer.xr.getController(0);
+  controller.addEventListener('select', ()=>{
+    if (!reticle.visible || !model) return;
+    const m = new THREE.Matrix4(); m.copy(reticle.matrix);
+    model.matrix.copy(m);
+    model.matrix.decompose(model.position, model.quaternion, model.scale);
+    setGhost(false);
+    placed = true;
+    hint.style.display = 'none';
+
+    // Animation starten nach Modus
+    const start = String(cfg.animation?.start || 'onPlace').toLowerCase();
+    if (start === 'onplace'){
+      startAnimation(cfg);
     }
-    // Danach togglen
-    mixer.timeScale = (mixer.timeScale === 0) ? 1 : 0;
+    // HUD zeigen
+    hud.el.style.display = 'flex';
+    if (audio) hud.btnMute.style.display = '';
+    // Bei manual Play-Button zeigen
+    hud.btnPlay.style.display = (start === 'manual' && mixer && clips.length) ? '' : 'none';
+  });
+  scene.add(controller);
+
+  // onSession end
+  session.addEventListener('end', ()=>{
+    hitTestSource = null;
+    placed=false; setGhost(true);
+    hud.el.style.display='none';
+    hint.style.display='none';
+  });
+
+  // Falls Audio onStart
+  if (cfg.audio?.autoplay === 'onStart' && audio && audio.buffer){
+    try { audio.play(); } catch {}
+  }
+
+  animate(cfg);
+}
+
+function animate(cfg){ renderer.setAnimationLoop((t, frame)=>{
+  if (!frame){ renderer.render(scene, camera); return; }
+
+  // Mixer-Update
+  if (mixer){
+    const dt = renderer.xr.getClock().getDelta();
+    mixer.update(dt);
+  }
+
+  // Hit-Test
+  if (hitTestSource){
+    const ref = renderer.xr.getReferenceSpace();
+    const results = frame.getHitTestResults(hitTestSource);
+    if (results.length){
+      const pose = results[0].getPose(ref);
+      if (pose?.transform){
+        reticle.visible = true;
+        reticle.matrix.fromArray(pose.transform.matrix);
+
+        // Ghost folgt Reticle bis Platzierung
+        if (model && !placed){
+          model.matrix.fromArray(pose.transform.matrix);
+          model.matrix.decompose(model.position, model.quaternion, model.scale);
+        }
+      }
+    } else {
+      reticle.visible = false;
+    }
+  }
+  renderer.render(scene, camera);
+});}
+
+/* UI verdrahten */
+function wireHud(cfg){
+  hud.btnScaleM.onclick = ()=>{ if (!model) return; model.scale.multiplyScalar(0.9); };
+  hud.btnScaleP.onclick = ()=>{ if (!model) return; model.scale.multiplyScalar(1.1); };
+  hud.btnRotM.onclick   = ()=>{ if (!model) return; model.rotateY(-Math.PI/12); };
+  hud.btnRotP.onclick   = ()=>{ if (!model) return; model.rotateY(+Math.PI/12); };
+  hud.btnReset.onclick  = ()=>{
+    if (!model) return;
+    pauseAnimationAndAudio(cfg);
+    model.scale.setScalar(baseScale);
+    placed=false; setGhost(true); hint.style.display='block'; hud.el.style.display='none';
+  };
+  hud.btnPlay.onclick   = ()=>{
+    if (!mixer) return;
+    if (mixer.timeScale === 0){ mixer.timeScale=1; if (cfg.audio?.autoplay==='withAnimation' && audio && !audio.isPlaying){ try{audio.play();}catch{} } }
+    else if (mixer._hasStarted){ mixer.timeScale=0; if (cfg.audio?.autoplay==='withAnimation' && audio?.isPlaying){ try{audio.stop();}catch{} } }
+    else { startAnimation(cfg); mixer._hasStarted = true; }
+  };
+  hud.btnMute.onclick   = ()=>{
+    if (!audio) return;
+    audioMuted = !audioMuted;
+    audio.setVolume(audioMuted ? 0 : (Number.isFinite(cfg.audio?.volume)?cfg.audio.volume:0.85));
+    hud.btnMute.classList.toggle('danger', audioMuted);
   };
 }
 
-/* ---------- GLB/GLTF Loader ---------- */
-async function loadGLTFFlexible(url) {
-  const res = await fetch(url, { mode: 'cors', credentials: 'omit' });
-  if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
+function wireOverlay(cfg){
+  const w = cfg.ui?.welcome || {};
+  // Übernehme Texte
+  overlay.poster.src = resolveRel(w.poster || 'poster.jpg', cfg);
+  overlay.poster.style.display = w.poster ? '' : 'none';
+  overlay.eyebrow.textContent = w.eyebrow || '';
+  overlay.title.textContent   = w.title || cfg.meta?.title || 'ARea AR Experience';
+  overlay.desc.textContent    = w.desc  || cfg.meta?.description || 'Tippe auf OK und platziere das 3D‑Objekt in deiner Umgebung.';
 
-  const ct = (res.headers.get('content-type') || '').toLowerCase();
-  const looksGLB = /\.glb(?:[?#]|$)/i.test(url) || ct.includes('model/gltf-binary') || ct.includes('application/octet-stream');
-
-  const loader = new GLTFLoader();
-  loader.setCrossOrigin('anonymous');
-  const draco = new DRACOLoader();
-  draco.setDecoderPath('https://www.gstatic.com/draco/v1/decoders/');
-  loader.setDRACOLoader(draco);
-
-  if (looksGLB) {
-    const buf = await res.arrayBuffer();
-    return new Promise((resolve, reject)=>
-      loader.parse(buf, '', gltf=>resolve(gltf), err=>reject(err))
-    );
-  } else {
-    const text = await res.text();
-    let json;
-    try { json = JSON.parse(text); }
-    catch (e) { showErr('GLTF-JSON konnte nicht geparst werden.'); throw e; }
-    const base = url.replace(/[^\/?#]*([?#].*)?$/, '');
-    return new Promise((resolve, reject)=>
-      loader.parse(json, base, gltf=>resolve(gltf), err=>reject(err))
-    );
+  // Native CTA je nach policy
+  const usdz = cfg.model?.usdzUrl ? resolveRel(cfg.model.usdzUrl, cfg) : '';
+  let showNative = false;
+  const cta = (w.nativeCta || 'ios-only').toLowerCase();
+  if (!navigator.xr){ // nur anbieten, wenn XR fehlt (oder nach Policy immer)
+    if (cta === 'always') showNative = true;
+    if (cta === 'ios-only' && isIOS && usdz) showNative = true;
   }
-}
+  overlay.native.style.display = showNative ? '' : 'none';
+  overlay.native.onclick = ()=>{ location.href = buildNativeLink(cfg); };
 
-/* ---------- Tap: platzieren & laden ---------- */
-async function onSelect() {
-  if (!reticle.visible) return;
-
-  if (!model) {
-    try {
-      const gltf = await loadGLTFFlexible(cfg.modelUrl);
-      model = gltf.scene;
-      const [sx,sy,sz] = cfg.scale;    model.scale.set(sx,sy,sz);
-      const [rx,ry,rz] = cfg.rotation; model.rotation.set(deg2rad(rx), deg2rad(ry), deg2rad(rz));
-      model.position.setFromMatrixPosition(reticle.matrix);
-      scene.add(model);
-
-      clips = gltf.animations || [];
-      log('GLB Clips', clips.map(c=>({name:c.name,dur:c.duration.toFixed(2)})));
-      if (clips.length) {
-        mixer = new THREE.AnimationMixer(model);
-        // Autostart: onPlace oder onStart → direkt nach Platzierung starten
-        if (cfg.animStart === 'onplace' || cfg.animStart === 'onstart') {
-          startSelectedClip();
-        } else if (cfg.animStart === 'onclick') {
-          ensureHudForOnClick();
-        }
-      } else {
-        log('Keine Animationen im Modell gefunden.');
+  overlay.start.onclick = async ()=>{
+    try{
+      if (!navigator.xr || !(await navigator.xr.isSessionSupported('immersive-ar'))){
+        // Kein WebXR → ggf. nativ
+        if (showNative){ location.href = buildNativeLink(cfg); return; }
+        throw new Error('WebXR (AR) wird nicht unterstützt.');
       }
-    } catch (err) {
-      console.error('GLTF load failed', err);
-      showErr('Fehler beim Laden des Objekts:\n' + (err?.message || err || 'Unbekannt'));
-    }
-  } else {
-    model.position.setFromMatrixPosition(reticle.matrix);
-  }
+      // Model vorher laden, damit Ghost bereit ist
+      await loadModel(cfg);
+      overlay.el.style.display = 'none';
+      hint.style.display = 'block';
+      await startXR(cfg);
+
+      // Falls Start=onStart → direkt starten (nach Session-Start + Model bereit)
+      const start = String(cfg.animation?.start || 'onPlace').toLowerCase();
+      if (start === 'onstart'){ startAnimation(cfg); }
+    }catch(e){ showErr(e?.message||String(e)); }
+  };
 }
 
-// ---------- WebXR ----------
-async function startAR(){
-  if (!navigator.xr) { showErr('WebXR nicht verfügbar.'); return; }
-  const isARSupported = await navigator.xr.isSessionSupported('immersive-ar');
-  if (!isARSupported) { showErr('Dein Gerät/Browser unterstützt kein WebXR-AR.'); return; }
-
-  const session = await navigator.xr.requestSession('immersive-ar', { requiredFeatures: ['hit-test','local-floor'] });
-  renderer.xr.setReferenceSpaceType('local-floor');
-  await renderer.xr.setSession(session);
-  document.getElementById('enter').style.display='none';
-  animate();
-}
-
-function animate() { renderer.setAnimationLoop(render); }
-
-function render(t, frame) {
-  const dt = clock.getDelta(); if (mixer) mixer.update(dt);
-  if (!frame){ renderer.render(scene, camera); return; }
-  const referenceSpace = renderer.xr.getReferenceSpace();
-  const session = renderer.xr.getSession();
-
-  if (!hitTestSourceRequested) {
-    session.requestReferenceSpace('viewer').then((viewerSpace) => {
-      session.requestHitTestSource({ space: viewerSpace }).then((source) => { hitTestSource = source; });
-    });
-    session.addEventListener('end', () => { hitTestSourceRequested = false; hitTestSource = null; });
-    hitTestSourceRequested = true;
-  }
-
-  if (hitTestSource) {
-    const results = frame.getHitTestResults(hitTestSource);
-    if (results.length) {
-      const hit = results[0];
-      const pose = hit.getPose(referenceSpace);
-      reticle.visible = true;
-      reticle.matrix.fromArray(pose.transform.matrix);
-    } else { reticle.visible = false; }
-  }
-
-  renderer.render(scene, camera);
-}
-
-// ---------- Boot ----------
+/* ===== Boot ===== */
 (async ()=>{
-  try{ await loadScene(); }catch(e){ console.warn(e); }
-  applyQueryFallback();
-  init();
+  try{
+    const cfg = await loadConfig();
+    normalizeCfg(cfg);
+    wireHud(cfg);
+
+    // GLB-only: kein Posterflow
+    if (cfg.__mode === 'glb-only'){
+      // Direkt in XR, ohne Poster
+      try{
+        await loadModel({ model:{ url: cfg.model.url, scale: 1 }, animation:{ start:'onPlace', clipName:'*' }, audio:{} , __base: location.href });
+      }catch(e){ showErr('GLB konnte nicht geladen werden: '+(e?.message||e)); }
+      overlay.el.style.display = 'none';
+      hint.style.display = 'block';
+      try{ await startXR({ animation:{ start:'onPlace', clipName:'*' }, audio:{} }); }catch(e){ showErr(e?.message||String(e)); }
+      return;
+    }
+
+    // Poster/Wilkommensoverlay anzeigen
+    wireOverlay(cfg);
+    overlay.el.style.display = 'flex';
+  }catch(e){
+    showErr(e?.message||String(e));
+  }
 })();
 </script>
 </body>
