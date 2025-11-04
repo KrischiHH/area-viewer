@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-  <title>ARea Viewer – Surface AR (Animation + Audio)</title>
+  <title>ARea Viewer – Surface AR (Gesture Placement + Animation + Audio)</title>
   <style>
     html,body{margin:0;height:100%;overflow:hidden;background:#000;color:#fff;font-family:system-ui}
     canvas{display:block}
@@ -54,7 +54,7 @@
   </div>
 
   <!-- Hint vor Platzierung -->
-  <div id="hint">Bewege das Gerät, richte auf den Boden und tippe zum Platzieren.</div>
+  <div id="hint">Bewege das Gerät, richte auf den Boden und tippe zum Platzieren. Zweifinger zum Drehen/Skalieren.</div>
 
   <!-- HUD -->
   <div id="hud">
@@ -82,6 +82,7 @@ const log = (...a)=>{ console.log('[area-viewer]', ...a); };
 const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform==='MacIntel' && navigator.maxTouchPoints>1);
 const isHttp = (u)=>/^https?:\/\//i.test(u);
 const isDataOrBlob = (u)=>/^data:|^blob:/i.test(u);
+const clamp = (v,min,max)=>Math.max(min, Math.min(max,v));
 
 function resolveRel(u, cfg){
   if (!u) return '';
@@ -94,7 +95,7 @@ function resolveRel(u, cfg){
 async function loadConfig(){
   // Fallback: reiner GLB-Viewer (?glb=…)
   const glb = qs.get('glb');
-  if (glb) return { __mode:'glb-only', model:{ url:glb }, animation:{}, audio:{}, ui:{} };
+  if (glb) return { __mode:'glb-only', model:{ url:glb, scale:1 }, animation:{ clipName:'*', start:'onPlace', loop:true, iterations:9999 }, audio:{ autoplay:'withAnimation', loop:false, volume:0.85 }, ui:{} };
 
   const src = qs.get('src');
   if (src){
@@ -104,7 +105,6 @@ async function loadConfig(){
         ? new TextDecoder().decode(Uint8Array.from(atob(after), c=>c.charCodeAt(0)))
         : decodeURIComponent(after);
       const cfg = JSON.parse(text);
-      // best-effort __base aus src data: nicht zuverlässig → none
       return cfg;
     }
     if (isHttp(src)){
@@ -114,7 +114,6 @@ async function loadConfig(){
       try{ const u = new URL(src); j.__base = u.origin + u.pathname.replace(/\/[^\/]*$/, '/'); }catch{}
       return j;
     }
-    // URL-encoded JSON
     const cfg = JSON.parse(decodeURIComponent(src));
     return cfg;
   }
@@ -153,15 +152,6 @@ function normalizeCfg(cfg){
   if (!('volume' in cfg.audio)) cfg.audio.volume = 0.85;
 
   if (!('scale' in cfg.model)) cfg.model.scale = 1.0;
-
-  // __base für Relativpfade
-  if (!cfg.__base){
-    try{
-      // Wenn model.url oder ui.welcome.poster relativ sind, ohne __base ist Auflösung schwierig.
-      // Bei ?scene=… setzen wir __base bereits in loadConfig(). Hier fallback auf location.
-      cfg.__base = location.href.replace(/\/[^\/]*$/, '/');
-    }catch{}
-  }
 }
 
 /* ===== Native Link ===== */
@@ -195,7 +185,7 @@ addEventListener('resize', ()=>{
   }
 });
 
-/* Reticle */
+/* Reticle (Platzierungsmarker) */
 const reticle = new THREE.Mesh(
   new THREE.RingGeometry(0.09, 0.1, 48).rotateX(-Math.PI/2),
   new THREE.MeshBasicMaterial({ color:0x88ccff, transparent:true, opacity:0.9 })
@@ -210,6 +200,7 @@ let placed=false;
 let baseScale=1;
 let ghostActive=true;
 const ghostStore = new WeakMap();
+const hoverOffset = 0.02; // „leicht schwebend“ über Marker
 
 const loader = new GLTFLoader();
 const draco = new DRACOLoader(); draco.setDecoderPath('https://www.gstatic.com/draco/v1/decoders/');
@@ -300,12 +291,11 @@ function startAnimation(cfg){
     try{ audio.play(); }catch{}
   }
 }
-function pauseAnimationAndAudio(cfg){
-  if (mixer) mixer.timeScale = 0;
+function stopAudioIfCoupled(cfg){
   if (cfg.audio?.autoplay === 'withAnimation' && audio?.isPlaying){ try{ audio.stop(); }catch{} }
 }
 
-/* HUD Controls */
+/* ===== Gesten (DOM-Overlay Touch) ===== */
 const hud = {
   el: document.getElementById('hud'),
   btnScaleM: document.getElementById('btnScaleM'),
@@ -316,8 +306,6 @@ const hud = {
   btnPlay:   document.getElementById('btnPlay'),
   btnMute:   document.getElementById('btnMute')
 };
-
-/* Overlay */
 const overlay = {
   el: document.getElementById('overlay'),
   poster: document.getElementById('ovPoster'),
@@ -329,10 +317,126 @@ const overlay = {
 };
 const hint = document.getElementById('hint');
 
-/* XR State */
-let xrSession=null, hitTestSource=null;
+let gesture = {
+  active:false,
+  startDist:0,
+  startAngle:0,
+  startScale:1,
+  startRotY:0,
+  tapCandidate:false,
+  tapX:0, tapY:0, tapTime:0
+};
+const MIN_SCALE = 0.05, MAX_SCALE = 20;
 
-/* WebXR Start */
+function distAng(t1, t2){
+  const dx = (t2.clientX - t1.clientX);
+  const dy = (t2.clientY - t1.clientY);
+  const d = Math.hypot(dx, dy);
+  const a = Math.atan2(dy, dx);
+  return {d,a};
+}
+function onTouchStart(e){
+  if (!renderer.xr.isPresenting) return;
+  if (!model) return;
+  if (e.touches.length === 1){
+    const t = e.touches[0];
+    gesture.tapCandidate = true;
+    gesture.tapX = t.clientX; gesture.tapY = t.clientY; gesture.tapTime = performance.now();
+  } else if (e.touches.length >= 2){
+    const {d,a} = distAng(e.touches[0], e.touches[1]);
+    gesture.active = true;
+    gesture.startDist = d || 1;
+    gesture.startAngle = a;
+    gesture.startScale = model.scale.x; // uniform
+    gesture.startRotY = model.rotation.y;
+  }
+  e.preventDefault();
+}
+function onTouchMove(e){
+  if (!renderer.xr.isPresenting) return;
+  if (!model) return;
+  if (e.touches.length >= 2 && gesture.active){
+    const {d,a} = distAng(e.touches[0], e.touches[1]);
+    const s = clamp(gesture.startScale * (d/gesture.startDist), MIN_SCALE, MAX_SCALE);
+    model.scale.setScalar(s);
+    const delta = a - gesture.startAngle;
+    model.rotation.y = gesture.startRotY + delta;
+  } else if (e.touches.length === 1){
+    // Bewegung → kein Tap mehr
+    const t = e.touches[0];
+    if (Math.hypot(t.clientX-gesture.tapX, t.clientY-gesture.tapY) > 12) gesture.tapCandidate=false;
+  }
+  e.preventDefault();
+}
+function onTouchEnd(e){
+  if (!renderer.xr.isPresenting) return;
+  if (gesture.active && e.touches.length < 2){
+    gesture.active = false;
+  }
+  if (gesture.tapCandidate && e.touches.length === 0){
+    const dt = performance.now() - gesture.tapTime;
+    if (dt < 300 && reticle.visible && model){
+      placeNow(_cfgRef);
+    }
+  }
+  gesture.tapCandidate = false;
+  e.preventDefault();
+}
+document.addEventListener('touchstart', onTouchStart, { passive:false });
+document.addEventListener('touchmove',  onTouchMove,  { passive:false });
+document.addEventListener('touchend',   onTouchEnd,   { passive:false });
+document.addEventListener('touchcancel',onTouchEnd,   { passive:false });
+
+/* ===== Platzierung ===== */
+function placeNow(cfg){
+  // commit Position von Reticle → Modell, mit „schwebendem“ Offset
+  const m = new THREE.Matrix4(); m.copy(reticle.matrix);
+  model.matrix.copy(m);
+  model.matrix.decompose(model.position, model.quaternion, model.scale);
+  model.position.y += hoverOffset;
+  setGhost(false);
+  placed = true;
+  hint.style.display = 'none';
+
+  // Animation nach Editor-Einstellung: immer NACH Platzierung
+  const mode = String(cfg.animation?.start || 'onPlace').toLowerCase();
+  if (mode === 'manual'){
+    hud.btnPlay.style.display = (mixer && clips.length) ? '' : 'none';
+  } else {
+    startAnimation(cfg);
+  }
+  // HUD zeigen
+  hud.el.style.display = 'flex';
+  if (audio) hud.btnMute.style.display = '';
+}
+
+/* ===== WebXR ===== */
+let xrSession=null, hitTestSource=null;
+function wireHud(cfg){
+  hud.btnScaleM.onclick = ()=>{ if (!model) return; const ns = clamp(model.scale.x*0.9, MIN_SCALE, MAX_SCALE); model.scale.setScalar(ns); };
+  hud.btnScaleP.onclick = ()=>{ if (!model) return; const ns = clamp(model.scale.x*1.1, MIN_SCALE, MAX_SCALE); model.scale.setScalar(ns); };
+  hud.btnRotM.onclick   = ()=>{ if (!model) return; model.rotateY(-Math.PI/12); };
+  hud.btnRotP.onclick   = ()=>{ if (!model) return; model.rotateY(+Math.PI/12); };
+  hud.btnReset.onclick  = ()=>{
+    if (!model) return;
+    stopAudioIfCoupled(cfg);
+    model.scale.setScalar(baseScale);
+    placed=false; setGhost(true); hint.style.display='block'; hud.el.style.display='none';
+  };
+  hud.btnPlay.onclick   = ()=>{
+    if (!mixer) return;
+    if (mixer.timeScale === 0){ mixer.timeScale=1; if (cfg.audio?.autoplay==='withAnimation' && audio && !audio.isPlaying){ try{audio.play();}catch{} } }
+    else if (mixer._hasStarted){ mixer.timeScale=0; stopAudioIfCoupled(cfg); }
+    else { startAnimation(cfg); mixer._hasStarted = true; }
+  };
+  hud.btnMute.onclick   = ()=>{
+    if (!audio) return;
+    audioMuted = !audioMuted;
+    audio.setVolume(audioMuted ? 0 : (Number.isFinite(cfg.audio?.volume)?cfg.audio.volume:0.85));
+    hud.btnMute.classList.toggle('danger', audioMuted);
+  };
+}
+
 async function startXR(cfg){
   if (!navigator.xr) throw new Error('WebXR wird in diesem Browser nicht unterstützt.');
   const session = await navigator.xr.requestSession('immersive-ar', {
@@ -350,31 +454,14 @@ async function startXR(cfg){
     hitTestSource = await session.requestHitTestSource({ space: viewerSpace });
   }catch(e){ console.warn('Hit-Test Source nicht verfügbar:', e); }
 
-  // onSelect → Platzieren
+  // Controller „select“ = Tap → Platzieren
   const controller = renderer.xr.getController(0);
   controller.addEventListener('select', ()=>{
     if (!reticle.visible || !model) return;
-    const m = new THREE.Matrix4(); m.copy(reticle.matrix);
-    model.matrix.copy(m);
-    model.matrix.decompose(model.position, model.quaternion, model.scale);
-    setGhost(false);
-    placed = true;
-    hint.style.display = 'none';
-
-    // Animation starten nach Modus
-    const start = String(cfg.animation?.start || 'onPlace').toLowerCase();
-    if (start === 'onplace'){
-      startAnimation(cfg);
-    }
-    // HUD zeigen
-    hud.el.style.display = 'flex';
-    if (audio) hud.btnMute.style.display = '';
-    // Bei manual Play-Button zeigen
-    hud.btnPlay.style.display = (start === 'manual' && mixer && clips.length) ? '' : 'none';
+    placeNow(cfg);
   });
   scene.add(controller);
 
-  // onSession end
   session.addEventListener('end', ()=>{
     hitTestSource = null;
     placed=false; setGhost(true);
@@ -382,86 +469,63 @@ async function startXR(cfg){
     hint.style.display='none';
   });
 
-  // Falls Audio onStart
-  if (cfg.audio?.autoplay === 'onStart' && audio && audio.buffer){
-    try { audio.play(); } catch {}
-  }
+  // Audio „onStart“ erst nach Start der Session sinnvoll – aber wir starten nach Platzierung.
+  // Falls du unbedingt onStart direkt möchtest, kannst du hier audio.play() auslösen.
 
   animate(cfg);
 }
 
-function animate(cfg){ renderer.setAnimationLoop((t, frame)=>{
-  if (!frame){ renderer.render(scene, camera); return; }
+function animate(cfg){
+  renderer.setAnimationLoop((t, frame)=>{
+    if (!frame){ renderer.render(scene, camera); return; }
 
-  // Mixer-Update
-  if (mixer){
-    const dt = renderer.xr.getClock().getDelta();
-    mixer.update(dt);
-  }
-
-  // Hit-Test
-  if (hitTestSource){
-    const ref = renderer.xr.getReferenceSpace();
-    const results = frame.getHitTestResults(hitTestSource);
-    if (results.length){
-      const pose = results[0].getPose(ref);
-      if (pose?.transform){
-        reticle.visible = true;
-        reticle.matrix.fromArray(pose.transform.matrix);
-
-        // Ghost folgt Reticle bis Platzierung
-        if (model && !placed){
-          model.matrix.fromArray(pose.transform.matrix);
-          model.matrix.decompose(model.position, model.quaternion, model.scale);
-        }
-      }
-    } else {
-      reticle.visible = false;
+    // Animation
+    if (mixer){
+      const dt = renderer.xr.getClock().getDelta();
+      mixer.update(dt);
     }
-  }
-  renderer.render(scene, camera);
-});}
 
-/* UI verdrahten */
-function wireHud(cfg){
-  hud.btnScaleM.onclick = ()=>{ if (!model) return; model.scale.multiplyScalar(0.9); };
-  hud.btnScaleP.onclick = ()=>{ if (!model) return; model.scale.multiplyScalar(1.1); };
-  hud.btnRotM.onclick   = ()=>{ if (!model) return; model.rotateY(-Math.PI/12); };
-  hud.btnRotP.onclick   = ()=>{ if (!model) return; model.rotateY(+Math.PI/12); };
-  hud.btnReset.onclick  = ()=>{
-    if (!model) return;
-    pauseAnimationAndAudio(cfg);
-    model.scale.setScalar(baseScale);
-    placed=false; setGhost(true); hint.style.display='block'; hud.el.style.display='none';
-  };
-  hud.btnPlay.onclick   = ()=>{
-    if (!mixer) return;
-    if (mixer.timeScale === 0){ mixer.timeScale=1; if (cfg.audio?.autoplay==='withAnimation' && audio && !audio.isPlaying){ try{audio.play();}catch{} } }
-    else if (mixer._hasStarted){ mixer.timeScale=0; if (cfg.audio?.autoplay==='withAnimation' && audio?.isPlaying){ try{audio.stop();}catch{} } }
-    else { startAnimation(cfg); mixer._hasStarted = true; }
-  };
-  hud.btnMute.onclick   = ()=>{
-    if (!audio) return;
-    audioMuted = !audioMuted;
-    audio.setVolume(audioMuted ? 0 : (Number.isFinite(cfg.audio?.volume)?cfg.audio.volume:0.85));
-    hud.btnMute.classList.toggle('danger', audioMuted);
-  };
+    // Hit-Test
+    if (hitTestSource){
+      const ref = renderer.xr.getReferenceSpace();
+      const results = frame.getHitTestResults(hitTestSource);
+      if (results.length){
+        const pose = results[0].getPose(ref);
+        if (pose?.transform){
+          reticle.visible = true;
+          reticle.matrix.fromArray(pose.transform.matrix);
+
+          // Ghost folgt Marker (leicht schwebend)
+          if (model && !placed){
+            model.matrix.fromArray(pose.transform.matrix);
+            model.matrix.decompose(model.position, model.quaternion, model.scale);
+            model.position.y += hoverOffset;
+          }
+          hint.style.display = ghostActive && !placed ? 'block' : 'none';
+        }
+      } else {
+        reticle.visible = false;
+        hint.style.display = 'block';
+      }
+    }
+    renderer.render(scene, camera);
+  });
 }
 
+/* Overlay / Native CTA */
 function wireOverlay(cfg){
   const w = cfg.ui?.welcome || {};
-  // Übernehme Texte
-  overlay.poster.src = resolveRel(w.poster || 'poster.jpg', cfg);
+  overlay.poster.src = resolveRel(w.poster || '', cfg);
   overlay.poster.style.display = w.poster ? '' : 'none';
   overlay.eyebrow.textContent = w.eyebrow || '';
   overlay.title.textContent   = w.title || cfg.meta?.title || 'ARea AR Experience';
-  overlay.desc.textContent    = w.desc  || cfg.meta?.description || 'Tippe auf OK und platziere das 3D‑Objekt in deiner Umgebung.';
+  overlay.desc.textContent    = w.desc  || cfg.meta?.description || 'Bewege das Gerät und tippe zum Platzieren. Zweifinger: drehen/skaliert.';
 
-  // Native CTA je nach policy
+  // Native CTA je nach policy und XR-Verfügbarkeit
   const usdz = cfg.model?.usdzUrl ? resolveRel(cfg.model.usdzUrl, cfg) : '';
   let showNative = false;
   const cta = (w.nativeCta || 'ios-only').toLowerCase();
-  if (!navigator.xr){ // nur anbieten, wenn XR fehlt (oder nach Policy immer)
+  if (!navigator.xr){
     if (cta === 'always') showNative = true;
     if (cta === 'ios-only' && isIOS && usdz) showNative = true;
   }
@@ -471,45 +535,38 @@ function wireOverlay(cfg){
   overlay.start.onclick = async ()=>{
     try{
       if (!navigator.xr || !(await navigator.xr.isSessionSupported('immersive-ar'))){
-        // Kein WebXR → ggf. nativ
         if (showNative){ location.href = buildNativeLink(cfg); return; }
         throw new Error('WebXR (AR) wird nicht unterstützt.');
       }
-      // Model vorher laden, damit Ghost bereit ist
+      // Modell vor der Session laden, damit Ghost direkt sichtbar ist
       await loadModel(cfg);
       overlay.el.style.display = 'none';
       hint.style.display = 'block';
       await startXR(cfg);
-
-      // Falls Start=onStart → direkt starten (nach Session-Start + Model bereit)
-      const start = String(cfg.animation?.start || 'onPlace').toLowerCase();
-      if (start === 'onstart'){ startAnimation(cfg); }
     }catch(e){ showErr(e?.message||String(e)); }
   };
 }
 
 /* ===== Boot ===== */
+let _cfgRef = null;
 (async ()=>{
   try{
     const cfg = await loadConfig();
     normalizeCfg(cfg);
+    _cfgRef = cfg;
     wireHud(cfg);
 
-    // GLB-only: kein Posterflow
-    if (cfg.__mode === 'glb-only'){
-      // Direkt in XR, ohne Poster
-      try{
-        await loadModel({ model:{ url: cfg.model.url, scale: 1 }, animation:{ start:'onPlace', clipName:'*' }, audio:{} , __base: location.href });
-      }catch(e){ showErr('GLB konnte nicht geladen werden: '+(e?.message||e)); }
-      overlay.el.style.display = 'none';
-      hint.style.display = 'block';
-      try{ await startXR({ animation:{ start:'onPlace', clipName:'*' }, audio:{} }); }catch(e){ showErr(e?.message||String(e)); }
-      return;
-    }
-
-    // Poster/Wilkommensoverlay anzeigen
+    // GLB-only: kein Posterflow → Start-Overlay ersatzlos? WebXR braucht User-Geste.
+    // Wenn kein Poster definiert ist, zeigen wir ein kleines Start-Overlay mit nur „OK“.
+    const hasPoster = !!cfg.ui?.welcome?.poster;
     wireOverlay(cfg);
     overlay.el.style.display = 'flex';
+    if (!hasPoster){
+      overlay.poster.style.display = 'none';
+      overlay.eyebrow.textContent = cfg.meta?.title ? 'ARea' : '';
+      overlay.title.textContent   = cfg.meta?.title || 'AR starten';
+      overlay.desc.textContent    = 'Tippe auf OK. Danach siehst du das 3D‑Modell als Ghost über dem Marker. Tippe, um zu platzieren.';
+    }
   }catch(e){
     showErr(e?.message||String(e));
   }
