@@ -250,20 +250,32 @@ function setupWelcomeScreen() {
         nativeCta.style.display = 'block';
         nativeCta.addEventListener('click', () => {
           if (isIOS && hasUsdz) {
-            // iOS Quick Look - prefers USDZ
-            const a = document.createElement('a');
-            a.rel = 'ar';
-            a.href = cfg.model.usdzUrl;
-            a.click();
+            // iOS Quick Look - prefers USDZ (basic URL validation)
+            try {
+              const url = new URL(cfg.model.usdzUrl);
+              if (url.protocol === 'https:' || url.protocol === 'http:') {
+                const a = document.createElement('a');
+                a.rel = 'ar';
+                a.href = cfg.model.usdzUrl;
+                a.click();
+              }
+            } catch (e) {
+              console.warn('Invalid USDZ URL:', e);
+            }
           } else if (hasGlb) {
-            // Android Scene Viewer Intent - uses GLB
-            const intent = `intent://arvr.google.com/scene-viewer/1.0?file=${encodeURIComponent(cfg.model.url)}#Intent;scheme=https;package=com.google.android.googlequicksearchbox;action=android.intent.action.VIEW;S.browser_fallback_url=https://developers.google.com/ar;end;`;
-            window.location.href = intent;
+            // Android Scene Viewer Intent - uses GLB (basic URL validation)
+            try {
+              const url = new URL(cfg.model.url);
+              if (url.protocol === 'https:' || url.protocol === 'http:') {
+                const intent = `intent://arvr.google.com/scene-viewer/1.0?file=${encodeURIComponent(cfg.model.url)}#Intent;scheme=https;package=com.google.android.googlequicksearchbox;action=android.intent.action.VIEW;S.browser_fallback_url=https://developers.google.com/ar;end;`;
+                window.location.href = intent;
+              }
+            } catch (e) {
+              console.warn('Invalid GLB URL:', e);
+            }
           }
         });
-        });
       }
-    }
   });
 }
 
