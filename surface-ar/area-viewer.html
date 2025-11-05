@@ -83,18 +83,17 @@
   const btnMute = document.getElementById('btnMute');
   const arBtn   = document.getElementById('arBtn');
 
-  // Basiskonfig mit UI/Audio-Flags wie im Native Viewer
+  // Basiskonfig mit UI/Audio-Flags
   let cfg = {
     model:{ url: SCENE_GLB || "https://modelviewer.dev/shared-assets/models/Astronaut.glb", usdzUrl:null, animation:"*" },
     target:{ previewUrl:null },
     audio:{ src:null, autoplay:"withAnimation", loop:true, volume:0.85 },
-    ui:{
-      showPlayPause:false,
-      showMute:false,
-      showAR:true,
-      arLabel:"In AR öffnen"
-    }
+    ui:{ showPlayPause:false, showMute:false, showAR:true, arLabel:"In AR öffnen" }
   };
+
+  // Merken, ob UI-Flags explizit gesetzt wurden
+  let uiExplicitPlayPause = false;
+  let uiExplicitMute = false;
 
   // Audio-Objekt (optional)
   let audio=null, audioReady=false, muted=false;
@@ -129,14 +128,21 @@
 
         // UI-Felder flexibel lesen (legacy + neu)
         if (j.ui){
-          if ('showPlayPause' in j.ui) cfg.ui.showPlayPause = !!j.ui.showPlayPause;
-          if ('showMute'      in j.ui) cfg.ui.showMute      = !!j.ui.showMute;
+          if ('showPlayPause' in j.ui) { cfg.ui.showPlayPause = !!j.ui.showPlayPause; uiExplicitPlayPause = true; }
+          if ('showMute'      in j.ui) { cfg.ui.showMute      = !!j.ui.showMute;      uiExplicitMute      = true; }
           if ('showAR'        in j.ui) cfg.ui.showAR        = !!j.ui.showAR;
           if (j.ui.arLabel)           cfg.ui.arLabel       = String(j.ui.arLabel);
           if (j.ui.controls){
-            if ('showPlay' in j.ui.controls) cfg.ui.showPlayPause = !!j.ui.controls.showPlay;
-            if ('showMute' in j.ui.controls) cfg.ui.showMute      = !!j.ui.controls.showMute;
+            if ('showPlay' in j.ui.controls) { cfg.ui.showPlayPause = !!j.ui.controls.showPlay; uiExplicitPlayPause = true; }
+            if ('showMute' in j.ui.controls) { cfg.ui.showMute      = !!j.ui.controls.showMute; uiExplicitMute      = true; }
           }
+        }
+
+        // Animation-Mapping aus scene.json → model.animation
+        if (j.animation){
+          const clip = j.animation.clipName;
+          if (clip !== undefined) cfg.model.animation = clip;
+          cfg.animation = j.animation; // start/loop/iterations (start wird unten ausgewertet)
         }
 
         if (!SCENE_GLB && cfg.model.url) mv.src = cfg.model.url + '#.glb';
@@ -158,12 +164,9 @@
       // 5) Audio einrichten (optional)
       if (cfg.audio?.src) setupAudio();
 
-      // 6) HUD-Buttons sichtbar je nach Flags
-      const showPlay = !!cfg.ui.showPlayPause;
-      const showMute = !!cfg.ui.showMute && !!cfg.audio?.src;
-      btnPlay.style.display = showPlay ? '' : 'none';
-      btnMute.style.display = showMute ? '' : 'none';
-      hud.classList.toggle('hidden', !(showPlay || showMute));
+      // HUD vorerst per Flags, Fallback nach 'load' wenn Clips erkannt werden
+      const showMuteInitial = uiExplicitMute ? cfg.ui.showMute : !!cfg.audio?.src;
+      btnMute.style.display = showMuteInitial ? '' : 'none';
 
     } catch (e) {
       showErr('scene.json konnte nicht geladen werden: ' + e.message);
@@ -182,18 +185,44 @@
     const names = mv.availableAnimations || [];
     const sel = cfg.model.animation;
 
-    // Animation auswählen
-    if (sel === 'none'){ mv.autoplay=false; mv.animationName=null; return; }
-    if (sel === '*' || sel==null){
-      if (names.length){ mv.animationName = names[0]; mv.autoplay=true; }
-    } else if (typeof sel === 'string'){
-      mv.animationName = names.includes(sel) ? sel : (names[0] || null);
-      mv.autoplay = !!mv.animationName;
-    } else {
-      const idx = Math.max(0, Math.min(names.length-1, parseInt(sel||0,10)));
-      mv.animationName = names[idx] || null;
-      mv.autoplay = !!mv.animationName;
+    // Clip-Auswahl
+    let chosen = null;
+    if (sel === 'none') {
+      chosen = null;
+      mv.autoplay = false;
+    } else if (sel === '*' || sel == null) {
+      chosen = names[0] || null;
+      mv.autoplay = !!chosen;
+    } else if (typeof sel === 'string') {
+      if (/^\d+$/.test(sel)) {
+        const idx = Math.max(0, Math.min(names.length-1, parseInt(sel,10)));
+        chosen = names[idx] || null;
+      } else {
+        chosen = names.includes(sel) ? sel : (names[0] || null);
+      }
+      mv.autoplay = !!chosen;
+    } else if (Number.isFinite(sel)) {
+      const idx = Math.max(0, Math.min(names.length-1, sel|0));
+      chosen = names[idx] || null;
+      mv.autoplay = !!chosen;
     }
+
+    mv.animationName = chosen;
+
+    // Start-Policy aus scene.json
+    const startMode = String(cfg?.animation?.start || '').toLowerCase();
+    if (startMode === 'manual') {
+      mv.autoplay = false;
+      if (!mv.paused) try{ mv.pause(); }catch{}
+    }
+
+    // HUD-Fallback: Play/Pause anzeigen, wenn Animationen vorhanden und nicht explizit versteckt
+    const showPlay = uiExplicitPlayPause ? cfg.ui.showPlayPause : (names.length > 0);
+    btnPlay.style.display = showPlay ? '' : 'none';
+
+    // HUD-Container Sichtbarkeit
+    const anyHud = (btnPlay.style.display !== 'none') || (btnMute.style.display !== 'none');
+    hud.classList.toggle('hidden', !anyHud);
 
     // Audio-Autoplay
     if (audio && cfg.audio.autoplay === 'auto'){
