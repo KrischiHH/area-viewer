@@ -3,584 +3,229 @@
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-  <title>ARea Viewer – Surface AR (Gesture Placement + Animation + Audio)</title>
+  <title>ARea Viewer – Surface AR (Native Baseline)</title>
+  <script type="module" src="https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js"></script>
   <style>
-    html,body{margin:0;height:100%;overflow:hidden;background:#000;color:#fff;font-family:system-ui}
-    canvas{display:block}
-    /* Poster / Welcome Overlay */
-    #overlay{position:fixed;inset:0;z-index:20;display:none;align-items:center;justify-content:center;background:#0b1220}
-    .card{max-width:min(680px,92vw);display:grid;gap:12px}
-    .poster{width:100%;aspect-ratio:16/9;object-fit:cover;border-radius:12px;border:1px solid #22314d;background:#111}
-    .eyebrow{color:#9cf;font-weight:700;font-size:12px}
-    .title{font-weight:900;font-size:20px}
-    .desc{opacity:.9}
-    .row{display:flex;gap:8px}
-    .btn{all:unset;cursor:pointer;color:#fff;padding:10px 14px;border-radius:10px;border:1px solid #22314d;background:#0f1626}
-    .btn.primary{border-color:#6ea8ff}
-    /* HUD */
-    #hud{position:fixed;left:12px;bottom:12px;z-index:12;display:none;gap:8px;background:rgba(15,22,38,.88);border:1px solid #22314d;padding:6px;border-radius:12px;backdrop-filter:blur(6px)}
-    #hud button{all:unset;cursor:pointer;color:#fff;padding:8px 12px;border-radius:10px;border:1px solid #22314d;background:#0f1626}
-    #hud button.danger{border-color:#ff8585}
-    #badge{position:fixed;right:12px;top:12px;z-index:9;background:#0b1220;color:#9cf;padding:6px 8px;border-radius:8px;font:12px system-ui}
-    #err{position:fixed;left:12px;top:12px;z-index:30;background:#b00020;color:#fff;padding:8px 10px;border-radius:8px;display:none;font:12px/1.35 monospace;max-width:min(92vw,680px);white-space:pre-wrap}
-    /* Hint vor Platzierung */
-    #hint{position:fixed;left:12px;bottom:12px;z-index:10;background:#0b1220bd;border:1px solid #22314d;color:#9fc;padding:8px 10px;border-radius:10px;display:none}
-  </style>
-  <script type="importmap">
-  {
-    "imports": {
-      "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
-      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+    :root{color-scheme:dark light}
+    *,*::before,*::after{box-sizing:border-box}
+    html,body{margin:0;height:100%;background:#000;font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
+    model-viewer{position:fixed; inset:0; width:100vw; height:100svh; display:block; background:#000}
+    button[slot="ar-button"]{
+      position:absolute; left:max(12px,env(safe-area-inset-left)); top:max(12px,env(safe-area-inset-top));
+      padding:.75rem 1rem; border-radius:12px; border:1px solid rgba(255,255,255,.25); background:#111; color:#fff
     }
-  }
-  </script>
+    /* HUD */
+    #hud{position:fixed; right:max(12px,env(safe-area-inset-right)); bottom:max(12px,env(safe-area-inset-bottom));
+      display:flex; gap:8px; z-index:3; background:rgba(0,0,0,.35); border:1px solid rgba(255,255,255,.15);
+      padding:6px; border-radius:999px; backdrop-filter:blur(6px)}
+    #hud.hidden{display:none}
+    #hud button{all:unset; cursor:pointer; padding:8px 12px; border-radius:10px; color:#fff; user-select:none}
+    #err{position:fixed;left:12px;top:12px;z-index:9;background:#b00020;color:#fff;padding:8px 10px;border-radius:8px;display:none;font:12px/1.35 monospace;max-width:min(92vw,680px);white-space:pre-wrap}
+  </style>
 </head>
 <body>
   <div id="err"></div>
-  <div id="badge">WEBXR BUILD</div>
 
-  <!-- Poster / Welcome -->
-  <div id="overlay">
-    <div class="card">
-      <img id="ovPoster" class="poster" alt="">
-      <div class="eyebrow" id="ovEyebrow"></div>
-      <div class="title" id="ovTitle"></div>
-      <div class="desc" id="ovDesc"></div>
-      <div class="row">
-        <button class="btn primary" id="ovStart">OK · In AR starten</button>
-        <button class="btn" id="ovNative" style="display:none">In nativer AR öffnen</button>
-      </div>
-    </div>
+  <model-viewer id="mv"
+    src="https://modelviewer.dev/shared-assets/models/Astronaut.glb"
+    ar ar-modes="scene-viewer quick-look webxr"
+    camera-controls autoplay
+    environment-image="https://modelviewer.dev/shared-assets/environments/neutral.hdr"
+    exposure="1" shadow-intensity="1"
+    interaction-prompt="none"
+    camera-orbit="0deg 70deg auto"
+    camera-target="auto"
+    field-of-view="30deg"
+    poster="">
+    <button slot="ar-button" id="arBtn">In AR öffnen</button>
+  </model-viewer>
+
+  <!-- Mini-HUD -->
+  <div id="hud" class="hidden">
+    <button id="btnPlay" title="Play/Pause">▶︎/⏸</button>
+    <button id="btnMute" title="Ton an/aus">🔊</button>
   </div>
 
-  <!-- Hint vor Platzierung -->
-  <div id="hint">Bewege das Gerät oder ziehe mit dem Finger, um das Modell zu positionieren. Zweifinger: drehen/skaliert. Tippe zum Platzieren.</div>
+<script>
+  const qs = new URLSearchParams(location.search);
+  let scene = (qs.get('scene') || qs.get('src') || '').trim();
+  const workerBase = (qs.get('base') || 'https://area-publish.area-webar.workers.dev').replace(/\/$/, '');
+  const overrideGlb  = (qs.get('glb')  || '').trim();
+  const overrideUsdz = (qs.get('usdz') || '').trim();
 
-  <!-- HUD -->
-  <div id="hud">
-    <button id="btnScaleM">Scale −10%</button>
-    <button id="btnScaleP">Scale +10%</button>
-    <button id="btnRotM">Rotate −15°</button>
-    <button id="btnRotP">Rotate +15°</button>
-    <button id="btnReset">Reset</button>
-    <button id="btnPlay" style="display:none">Play/Pause</button>
-    <button id="btnMute" style="display:none">Mute</button>
-  </div>
+  const isHttp = (u)=> /^https?:\/\//i.test(u);
+  const isDataOrBlob = (u)=> u.startsWith('data:') || u.startsWith('blob:');
+  const endsWithAny = (u,exts)=> exts.some(ext=> u.toLowerCase().endsWith(ext));
 
-<script type="module">
-import * as THREE from 'three';
-import { GLTFLoader }  from 'three/addons/loaders/GLTFLoader.js';
-import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
+  let SCENE_GLB = '';
+  let SCENE_JSON = '';
 
-const qs = new URLSearchParams(location.search);
-const FORCE = (qs.get('force') || '').toLowerCase();
-if (FORCE === 'webxr') { try{ document.getElementById('badge').textContent='WEBXR (forced)'; }catch{} }
-
-const showErr = (m)=>{ const el=document.getElementById('err'); el.textContent=m; el.style.display='block'; console.error('[area-viewer]', m); };
-const log = (...a)=>{ console.log('[area-viewer]', ...a); };
-
-const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform==='MacIntel' && navigator.maxTouchPoints>1);
-const isHttp = (u)=>/^https?:\/\//i.test(u);
-const isDataOrBlob = (u)=>/^data:|^blob:/i.test(u);
-const clamp = (v,min,max)=>Math.max(min, Math.min(max,v));
-
-function resolveRel(u, cfg){
-  if (!u) return '';
-  if (isHttp(u) || isDataOrBlob(u)) return u;
-  const base = cfg?.__base || location.href;
-  try{ return new URL(u, base.replace(/\/?$/, '/')).href; }catch{ return u; }
-}
-
-/* ===== Config laden ===== */
-async function loadConfig(){
-  const glb = qs.get('glb');
-  if (glb) return { __mode:'glb-only', model:{ url:glb, scale:1 }, animation:{ clipName:'*', start:'onPlace', loop:true, iterations:9999 }, audio:{ autoplay:'withAnimation', loop:false, volume:0.85 }, ui:{} };
-
-  const src = qs.get('src');
-  if (src){
-    if (src.startsWith('data:')){
-      const after = src.split(',')[1] || '';
-      const text = src.includes(';base64,')
-        ? new TextDecoder().decode(Uint8Array.from(atob(after), c=>c.charCodeAt(0)))
-        : decodeURIComponent(after);
-      const cfg = JSON.parse(text);
-      return cfg;
-    }
-    if (isHttp(src)){
-      const r = await fetch(src, { cache:'no-store' });
-      if (!r.ok) throw new Error('scene.json (src) nicht erreichbar');
-      const j = await r.json();
-      try{ const u = new URL(src); j.__base = u.origin + u.pathname.replace(/\/[^\/]*$/, '/'); }catch{}
-      return j;
-    }
-    const cfg = JSON.parse(decodeURIComponent(src));
-    return cfg;
-  }
-
-  const id   = qs.get('scene') || qs.get('id');
-  const base = (qs.get('base') || '').replace(/\/$/,'');
-  if (!id || !base) throw new Error('Fehlende Parameter: ?scene & ?base erwartet');
-  const root = `${base}/scenes/${encodeURIComponent(id)}`;
-  const r = await fetch(`${root}/scene.json`, { cache:'no-store' });
-  if (!r.ok) throw new Error('scene.json nicht gefunden');
-  const j = await r.json();
-  j.__base = root + '/';
-  return j;
-}
-
-function normalizeCfg(cfg){
-  cfg.meta  = cfg.meta  || {};
-  cfg.model = cfg.model || {};
-  cfg.animation = cfg.animation || {};
-  cfg.audio = cfg.audio || {};
-  cfg.ui = cfg.ui || {};
-  cfg.ui.welcome = cfg.ui.welcome || {};
-
-  if (cfg.audio?.src && !cfg.audio.url) cfg.audio.url = cfg.audio.src;
-  if (cfg.target?.previewUrl && !cfg.ui.welcome.poster) cfg.ui.welcome.poster = cfg.target.previewUrl;
-
-  if (!('start' in cfg.animation)) cfg.animation.start = 'onPlace';
-  if (!('clipName' in cfg.animation)) cfg.animation.clipName = '*';
-  if (!('loop' in cfg.animation)) cfg.animation.loop = true;
-  if (!('iterations' in cfg.animation)) cfg.animation.iterations = 9999;
-
-  if (!('autoplay' in cfg.audio)) cfg.audio.autoplay = 'withAnimation';
-  if (!('loop' in cfg.audio)) cfg.audio.loop = false;
-  if (!('volume' in cfg.audio)) cfg.audio.volume = 0.85;
-
-  if (!('scale' in cfg.model)) cfg.model.scale = 1.0;
-}
-
-/* ===== Native Link ===== */
-function buildNativeLink(cfg){
-  const glb  = resolveRel(cfg.model?.url||'scene.glb', cfg);
-  const usdz = resolveRel(cfg.model?.usdzUrl||'', cfg);
-  if (isIOS && usdz) return usdz; // Quick Look
-  const file = encodeURIComponent(glb);
-  const title = encodeURIComponent(cfg.meta?.title || 'ARea Model');
-  return `intent://arvr.google.com/scene-viewer/1.0?file=${file}&mode=ar_preferred&title=${title}#Intent;scheme=https;package=com.google.android.googlequicksearchbox;end;`;
-}
-
-/* ===== THREE / WebXR Setup ===== */
-const renderer = new THREE.WebGLRenderer({ antialias:true, alpha:true, powerPreference:'high-performance' });
-renderer.setPixelRatio(Math.min(devicePixelRatio||1, 2));
-renderer.setSize(innerWidth, innerHeight);
-renderer.outputColorSpace = THREE.SRGBColorSpace;
-renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.1;
-document.body.prepend(renderer.domElement);
-
-const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(50, innerWidth/innerHeight, 0.01, 50);
-const light = new THREE.HemisphereLight(0xffffff, 0x334466, 1.2); scene.add(light);
-const dir   = new THREE.DirectionalLight(0xffffff, 1.8); dir.position.set(0,3,1); scene.add(dir);
-
-addEventListener('resize', ()=>{
-  if (!renderer.xr.isPresenting) {
-    renderer.setSize(innerWidth, innerHeight);
-    camera.aspect = innerWidth/innerHeight; camera.updateProjectionMatrix();
-  }
-});
-
-/* Reticle (Platzierungsmarker) */
-const reticle = new THREE.Mesh(
-  new THREE.RingGeometry(0.09, 0.1, 48).rotateX(-Math.PI/2),
-  new THREE.MeshBasicMaterial({ color:0x88ccff, transparent:true, opacity:0.9 })
-);
-reticle.matrixAutoUpdate = false;
-reticle.visible = false;
-scene.add(reticle);
-
-/* Model + Ghost + Animation + Audio */
-let model=null, mixer=null, clips=[];
-let placed=false;
-let baseScale=1;
-let ghostActive=true;
-const ghostStore = new WeakMap();
-const hoverOffset = 0.02; // „leicht schwebend“
-
-const loader = new GLTFLoader();
-const draco = new DRACOLoader(); draco.setDecoderPath('https://www.gstatic.com/draco/v1/decoders/');
-loader.setDRACOLoader(draco);
-
-const listener = new THREE.AudioListener(); camera.add(listener);
-let audio=null; let audioMuted=false;
-
-async function loadModel(cfg){
-  const url = resolveRel(cfg.model?.url||'scene.glb', cfg);
-  const gltf = await loader.loadAsync(url);
-  model = gltf.scene || gltf.scenes?.[0];
-  baseScale = cfg.model?.scale || 1;
-  model.scale.setScalar(baseScale);
-  scene.add(model);
-
-  clips = gltf.animations || [];
-  if (clips.length) {
-    mixer = new THREE.AnimationMixer(model);
-    log('Clips:', clips.map(c=>c.name));
-  } else {
-    log('Keine Animationen im GLB gefunden.');
-  }
-
-  if (cfg.audio?.url){
-    const sound = new THREE.Audio(listener);
-    try{
-      const res = await fetch(resolveRel(cfg.audio.url, cfg)); if (!res.ok) throw new Error(res.status+' '+res.statusText);
-      const buff = await res.arrayBuffer();
-      const abuf = await listener.context.decodeAudioData(buff);
-      sound.setBuffer(abuf);
-      sound.setLoop(!!cfg.audio.loop);
-      sound.setVolume(Number.isFinite(cfg.audio.volume)?cfg.audio.volume:0.85);
-      audio = sound; model.add(sound);
-    }catch(e){ console.warn('Audio konnte nicht geladen werden:', e); }
-  }
-
-  setGhost(true);
-}
-
-function setGhost(on){
-  if (!model) return;
-  ghostActive = !!on;
-  model.traverse(obj=>{
-    const m = obj.material;
-    if (!m) return;
-    if (!ghostStore.has(m)) ghostStore.set(m, { transparent:m.transparent, opacity:m.opacity });
-    if (on){
-      m.transparent = true;
-      m.opacity = 0.5;
+  if (overrideGlb) {
+    SCENE_GLB = overrideGlb;
+  } else if (scene) {
+    if (isDataOrBlob(scene)) {
+      SCENE_JSON = scene;
+    } else if (isHttp(scene)) {
+      if (endsWithAny(scene, ['.glb','.gltf'])) SCENE_GLB = scene;
+      else SCENE_JSON = scene;
     } else {
-      const st = ghostStore.get(m);
-      if (st){ m.transparent = st.transparent; m.opacity = st.opacity; }
-      else { m.transparent=false; m.opacity=1; }
+      const id = scene.replace(/\/+$/,'');
+      SCENE_GLB  = `${workerBase}/scenes/${encodeURIComponent(id)}/scene.glb`;
+      SCENE_JSON = `${workerBase}/scenes/${encodeURIComponent(id)}/scene.json`;
     }
-    m.needsUpdate = true;
-  });
-}
-
-function selectClip(cfg){
-  if (!mixer || !clips.length) return null;
-  const want = cfg.animation?.clipName;
-  if (want === 'none' || want === null) return null;
-  if (want && want !== '*'){
-    return clips.find(c=>c.name===want) || clips[0] || null;
   }
-  return clips[0] || null;
-}
 
-function startAnimation(cfg){
-  if (!mixer) return;
-  const clip = selectClip(cfg);
-  if (!clip) return;
-  mixer.stopAllAction();
-  const act = mixer.clipAction(clip);
-  if (cfg.animation?.loop !== false){
-    act.setLoop(THREE.LoopRepeat, cfg.animation?.iterations ?? 9999);
-  } else {
-    act.setLoop(THREE.LoopOnce, 0);
-    act.clampWhenFinished = true;
-  }
-  act.reset().play();
-  mixer.timeScale = 1;
+  const showErr = (m)=>{ const el=document.getElementById('err'); el.textContent=m; el.style.display='block'; };
 
-  if (cfg.audio?.autoplay === 'withAnimation' && audio && audio.buffer){
-    try{ audio.stop(); }catch{}
-    try{ audio.play(); }catch{}
-  }
-}
-function stopAudioIfCoupled(cfg){
-  if (cfg.audio?.autoplay === 'withAnimation' && audio?.isPlaying){ try{ audio.stop(); }catch{} }
-}
+  const mv = document.getElementById('mv');
+  const hud = document.getElementById('hud');
+  const btnPlay = document.getElementById('btnPlay');
+  const btnMute = document.getElementById('btnMute');
+  const arBtn   = document.getElementById('arBtn');
 
-/* ===== Gesten (DOM-Overlay Touch) + „Finger verschieben“ ===== */
-const hud = {
-  el: document.getElementById('hud'),
-  btnScaleM: document.getElementById('btnScaleM'),
-  btnScaleP: document.getElementById('btnScaleP'),
-  btnRotM:   document.getElementById('btnRotM'),
-  btnRotP:   document.getElementById('btnRotP'),
-  btnReset:  document.getElementById('btnReset'),
-  btnPlay:   document.getElementById('btnPlay'),
-  btnMute:   document.getElementById('btnMute')
-};
-const overlay = {
-  el: document.getElementById('overlay'),
-  poster: document.getElementById('ovPoster'),
-  eyebrow: document.getElementById('ovEyebrow'),
-  title: document.getElementById('ovTitle'),
-  desc: document.getElementById('ovDesc'),
-  start: document.getElementById('ovStart'),
-  native: document.getElementById('ovNative')
-};
-const hint = document.getElementById('hint');
-
-let gesture = {
-  active:false,
-  startDist:0,
-  startAngle:0,
-  startScale:1,
-  startRotY:0,
-  tapCandidate:false,
-  tapX:0, tapY:0, tapTime:0,
-  touchDown:false
-};
-const MIN_SCALE = 0.05, MAX_SCALE = 20;
-
-function distAng(t1, t2){
-  const dx = (t2.clientX - t1.clientX);
-  const dy = (t2.clientY - t1.clientY);
-  const d = Math.hypot(dx, dy);
-  const a = Math.atan2(dy, dx);
-  return {d,a};
-}
-function onTouchStart(e){
-  if (!renderer.xr.isPresenting) return;
-  if (!model) return;
-  if (e.touches.length === 1){
-    const t = e.touches[0];
-    gesture.tapCandidate = true;
-    gesture.tapX = t.clientX; gesture.tapY = t.clientY; gesture.tapTime = performance.now();
-    gesture.touchDown = true;  // Finger-Drag aktiv → Transient Hit-Test wird genutzt
-  } else if (e.touches.length >= 2){
-    const {d,a} = distAng(e.touches[0], e.touches[1]);
-    gesture.active = true;
-    gesture.startDist = d || 1;
-    gesture.startAngle = a;
-    gesture.startScale = model.scale.x; // uniform
-    gesture.startRotY = model.rotation.y;
-    gesture.touchDown = false;
-  }
-  e.preventDefault();
-}
-function onTouchMove(e){
-  if (!renderer.xr.isPresenting) return;
-  if (!model) return;
-  if (e.touches.length >= 2 && gesture.active){
-    const {d,a} = distAng(e.touches[0], e.touches[1]);
-    const s = clamp(gesture.startScale * (d/gesture.startDist), MIN_SCALE, MAX_SCALE);
-    model.scale.setScalar(s);
-    const delta = a - gesture.startAngle;
-    model.rotation.y = gesture.startRotY + delta;
-  } else if (e.touches.length === 1){
-    const t = e.touches[0];
-    if (Math.hypot(t.clientX-gesture.tapX, t.clientY-gesture.tapY) > 12) gesture.tapCandidate=false;
-  }
-  e.preventDefault();
-}
-function onTouchEnd(e){
-  if (!renderer.xr.isPresenting) return;
-  if (gesture.active && e.touches.length < 2){
-    gesture.active = false;
-  }
-  if (e.touches.length === 0) {
-    // Tap?
-    if (gesture.tapCandidate){
-      const dt = performance.now() - gesture.tapTime;
-      if (dt < 300 && reticle.visible && model){
-        placeNow(_cfgRef);
-      }
+  // Basiskonfig mit UI/Audio-Flags wie im scene-viewer
+  let cfg = {
+    model:{ url: SCENE_GLB || "https://modelviewer.dev/shared-assets/models/Astronaut.glb", usdzUrl:null, animation:"*" },
+    target:{ previewUrl:null },
+    audio:{ src:null, autoplay:"withAnimation", loop:true, volume:0.85 },
+    ui:{
+      showPlayPause:false,
+      showMute:false,
+      showAR:true,
+      arLabel:"In AR öffnen"
     }
-    gesture.tapCandidate = false;
-    gesture.touchDown = false;
+  };
+
+  // Audio-Objekt (optional)
+  let audio=null, audioReady=false, muted=false;
+  function setupAudio(){
+    if (!cfg.audio?.src) return;
+    audio = new Audio(cfg.audio.src);
+    audio.crossOrigin = "anonymous";
+    audio.loop = !!cfg.audio.loop;
+    audio.volume = Number.isFinite(cfg.audio.volume) ? cfg.audio.volume : 0.85;
+    audioReady = true;
   }
-  e.preventDefault();
-}
-document.addEventListener('touchstart', onTouchStart, { passive:false });
-document.addEventListener('touchmove',  onTouchMove,  { passive:false });
-document.addEventListener('touchend',   onTouchEnd,   { passive:false });
-document.addEventListener('touchcancel',onTouchEnd,   { passive:false });
-
-/* ===== Platzierung ===== */
-function placeNow(cfg){
-  const m = new THREE.Matrix4(); m.copy(reticle.matrix);
-  model.matrix.copy(m);
-  model.matrix.decompose(model.position, model.quaternion, model.scale);
-  model.position.y += hoverOffset;
-  setGhost(false);
-  placed = true;
-  hint.style.display = 'none';
-
-  const mode = String(cfg.animation?.start || 'onPlace').toLowerCase();
-  if (mode === 'manual'){
-    hud.btnPlay.style.display = (mixer && clips.length) ? '' : 'none';
-  } else {
-    startAnimation(cfg);
+  function setMuted(on){
+    muted = !!on;
+    if (audio && audioReady) audio.muted = muted;
+    btnMute.textContent = muted ? '🔈' : '🔊';
   }
-  hud.el.style.display = 'flex';
-  if (audio) hud.btnMute.style.display = '';
-}
 
-/* ===== WebXR ===== */
-let xrSession=null, hitTestSource=null, transientHT=null;
-function wireHud(cfg){
-  hud.btnScaleM.onclick = ()=>{ if (!model) return; const ns = clamp(model.scale.x*0.9, MIN_SCALE, MAX_SCALE); model.scale.setScalar(ns); };
-  hud.btnScaleP.onclick = ()=>{ if (!model) return; const ns = clamp(model.scale.x*1.1, MIN_SCALE, MAX_SCALE); model.scale.setScalar(ns); };
-  hud.btnRotM.onclick   = ()=>{ if (!model) return; model.rotateY(-Math.PI/12); };
-  hud.btnRotP.onclick   = ()=>{ if (!model) return; model.rotateY(+Math.PI/12); };
-  hud.btnReset.onclick  = ()=>{
-    if (!model) return;
-    stopAudioIfCoupled(cfg);
-    model.scale.setScalar(baseScale);
-    placed=false; setGhost(true); hint.style.display='block'; hud.el.style.display='none';
-  };
-  hud.btnPlay.onclick   = ()=>{
-    if (!mixer) return;
-    if (mixer.timeScale === 0){ mixer.timeScale=1; if (cfg.audio?.autoplay==='withAnimation' && audio && !audio.isPlaying){ try{audio.play();}catch{} } }
-    else if (mixer._hasStarted){ mixer.timeScale=0; stopAudioIfCoupled(cfg); }
-    else { startAnimation(cfg); mixer._hasStarted = true; }
-  };
-  hud.btnMute.onclick   = ()=>{
-    if (!audio) return;
-    audioMuted = !audioMuted;
-    audio.setVolume(audioMuted ? 0 : (Number.isFinite(cfg.audio?.volume)?cfg.audio.volume:0.85));
-    hud.btnMute.classList.toggle('danger', audioMuted);
-  };
-}
+  (async () => {
+    try {
+      // 1) Wenn GLB ermittelt → direkt setzen (mit .glb-Hint)
+      if (SCENE_GLB) mv.src = SCENE_GLB + '#.glb';
 
-async function startXR(cfg){
-  if (!navigator.xr) throw new Error('WebXR wird in diesem Browser nicht unterstützt.');
-  const session = await navigator.xr.requestSession('immersive-ar', {
-    requiredFeatures: ['hit-test','local-floor'],
-    optionalFeatures: ['dom-overlay'],
-    domOverlay: { root: document.body }
-  });
-  renderer.xr.setReferenceSpaceType('local-floor');
-  await renderer.xr.setSession(session);
-  xrSession = session;
+      // 2) Optional JSON laden
+      if (SCENE_JSON) {
+        const r = await fetch(SCENE_JSON, { cache: 'no-cache' });
+        if (!r.ok) throw new Error(r.status + ' ' + r.statusText);
+        const j = await r.json();
 
-  // viewerSpace + hit-test
-  try{
-    const viewerSpace = await session.requestReferenceSpace('viewer');
-    hitTestSource = await session.requestHitTestSource({ space: viewerSpace });
-    // Transient hit-test für „Finger verschieben“
-    transientHT = await session.requestHitTestSourceForTransientInput({ profile: 'generic-touchscreen' });
-  }catch(e){ console.warn('Hit-Test Source nicht verfügbar:', e); }
+        if (j.model)  Object.assign(cfg.model,  j.model);
+        if (j.target) Object.assign(cfg.target, j.target);
+        if (j.audio)  Object.assign(cfg.audio,  j.audio);
 
-  const controller = renderer.xr.getController(0);
-  controller.addEventListener('select', ()=>{
-    if (!reticle.visible || !model) return;
-    placeNow(cfg);
-  });
-  scene.add(controller);
-
-  session.addEventListener('end', ()=>{
-    hitTestSource = null; transientHT = null;
-    placed=false; setGhost(true);
-    hud.el.style.display='none';
-    hint.style.display='none';
-  });
-
-  animate(cfg);
-}
-
-function animate(cfg){
-  renderer.setAnimationLoop((t, frame)=>{
-    if (!frame){ renderer.render(scene, camera); return; }
-
-    if (mixer){
-      const dt = renderer.xr.getClock().getDelta();
-      mixer.update(dt);
-    }
-
-    const ref = renderer.xr.getReferenceSpace();
-
-    // 1) Finger-Drag: solange Touch unten ist → Transient Hit-Test nutzen
-    let updatedByTouch = false;
-    if (transientHT && gesture.touchDown){
-      const transient = frame.getHitTestResultsForTransientInput(transientHT);
-      if (transient.length){
-        const res = transient[0].results[0];
-        const pose = res?.getPose(ref);
-        if (pose?.transform){
-          updatedByTouch = true;
-          reticle.visible = true;
-          reticle.matrix.fromArray(pose.transform.matrix);
-          if (model && !placed){
-            model.matrix.fromArray(pose.transform.matrix);
-            model.matrix.decompose(model.position, model.quaternion, model.scale);
-            model.position.y += hoverOffset;
+        // UI-Felder flexibel lesen (legacy + neu)
+        if (j.ui){
+          // legacy flags
+          if ('showPlayPause' in j.ui) cfg.ui.showPlayPause = !!j.ui.showPlayPause;
+          if ('showMute'      in j.ui) cfg.ui.showMute      = !!j.ui.showMute;
+          if ('showAR'        in j.ui) cfg.ui.showAR        = !!j.ui.showAR;
+          if (j.ui.arLabel)           cfg.ui.arLabel       = String(j.ui.arLabel);
+          // optional: nested controls
+          if (j.ui.controls){
+            if ('showPlay' in j.ui.controls) cfg.ui.showPlayPause = !!j.ui.controls.showPlay;
+            if ('showMute' in j.ui.controls) cfg.ui.showMute      = !!j.ui.controls.showMute;
           }
         }
-      }
-    }
 
-    // 2) Fallback: Viewer-Hit-Test (Gerät bewegen)
-    if (!updatedByTouch && hitTestSource){
-      const results = frame.getHitTestResults(hitTestSource);
-      if (results.length){
-        const pose = results[0].getPose(ref);
-        if (pose?.transform){
-          reticle.visible = true;
-          reticle.matrix.fromArray(pose.transform.matrix);
-          if (model && !placed){
-            model.matrix.fromArray(pose.transform.matrix);
-            model.matrix.decompose(model.position, model.quaternion, model.scale);
-            model.position.y += hoverOffset;
-          }
-        }
+        if (!SCENE_GLB && cfg.model.url) mv.src = cfg.model.url + '#.glb';
+      }
+
+      // 3) USDZ/Poster
+      const usdz = overrideUsdz || cfg.model.usdzUrl;
+      if (usdz) mv.setAttribute('ios-src', usdz); else mv.removeAttribute('ios-src');
+      if (cfg.target?.previewUrl) mv.setAttribute('poster', cfg.target.previewUrl);
+
+      // 4) AR-Button Sichtbarkeit/Label
+      if (!cfg.ui.showAR) {
+        mv.removeAttribute('ar');
+        arBtn.style.display = 'none';
       } else {
-        reticle.visible = false;
+        arBtn.textContent = cfg.ui.arLabel || 'In AR öffnen';
       }
+
+      // 5) Audio einrichten (optional)
+      if (cfg.audio?.src) setupAudio();
+
+      // 6) HUD-Buttons sichtbar je nach Flags
+      const showPlay = !!cfg.ui.showPlayPause;
+      const showMute = !!cfg.ui.showMute && !!cfg.audio?.src;
+      btnPlay.style.display = showPlay ? '' : 'none';
+      btnMute.style.display = showMute ? '' : 'none';
+      hud.classList.toggle('hidden', !(showPlay || showMute));
+
+    } catch (e) {
+      showErr('scene.json konnte nicht geladen werden: ' + e.message);
+      console.error(e);
+    }
+  })();
+
+  // Wenn Model geladen ist, Animationen zuweisen & Play/Mute koppeln
+  mv.addEventListener('load', ()=>{
+    // Kamera-Defaults
+    mv.cameraOrbit = '0deg 70deg auto';
+    mv.cameraTarget = 'auto';
+    mv.fieldOfView  = '30deg';
+    mv.jumpCameraToGoal();
+
+    const names = mv.availableAnimations || [];
+    const sel = cfg.model.animation;
+
+    // Animation auswählen
+    if (sel === 'none'){ mv.autoplay=false; mv.animationName=null; return; }
+    if (sel === '*' || sel==null){
+      if (names.length){ mv.animationName = names[0]; mv.autoplay=true; }
+    } else if (typeof sel === 'string'){
+      mv.animationName = names.includes(sel) ? sel : (names[0] || null);
+      mv.autoplay = !!mv.animationName;
+    } else {
+      const idx = Math.max(0, Math.min(names.length-1, parseInt(sel||0,10)));
+      mv.animationName = names[idx] || null;
+      mv.autoplay = !!mv.animationName;
     }
 
-    hint.style.display = ghostActive && !placed ? 'block' : 'none';
-    renderer.render(scene, camera);
+    // Audio-Autoplay
+    if (audio && cfg.audio.autoplay === 'auto'){
+      // User-Gesture evtl. nötig
+      const kick = ()=>{ try{ audio.play(); }catch{} window.removeEventListener('pointerdown', kick); };
+      window.addEventListener('pointerdown', kick, { once:true });
+    }
+
+    // Events koppeln: Animation ↔ Audio (withAnimation)
+    mv.addEventListener('play', ()=>{
+      if (audio && cfg.audio.autoplay === 'withAnimation' && !audio.muted){
+        try{ audio.play(); }catch{}
+      }
+      btnPlay.textContent = '⏸';
+    });
+    mv.addEventListener('pause', ()=>{
+      if (audio && cfg.audio.autoplay === 'withAnimation' && !audio.paused){
+        try{ audio.pause(); }catch{}
+      }
+      btnPlay.textContent = '▶︎';
+    });
   });
-}
 
-/* Overlay / Native CTA */
-function wireOverlay(cfg){
-  const w = cfg.ui?.welcome || {};
-  if (w.poster){ overlay.poster.src = resolveRel(w.poster, cfg); overlay.poster.style.display=''; } else { overlay.poster.style.display='none'; }
-  overlay.eyebrow.textContent = w.eyebrow || '';
-  overlay.title.textContent   = w.title || cfg.meta?.title || 'ARea AR Experience';
-  overlay.desc.textContent    = w.desc  || cfg.meta?.description || 'Bewege das Gerät oder ziehe mit dem Finger. Tippe zum Platzieren.';
-
-  const usdz = cfg.model?.usdzUrl ? resolveRel(cfg.model.usdzUrl, cfg) : '';
-  let showNative = false;
-  const cta = (w.nativeCta || 'ios-only').toLowerCase();
-  if (!navigator.xr){
-    if (cta === 'always') showNative = true;
-    if (cta === 'ios-only' && isIOS && usdz) showNative = true;
-  }
-  overlay.native.style.display = showNative ? '' : 'none';
-  overlay.native.onclick = ()=>{ location.href = buildNativeLink(cfg); };
-
-  overlay.start.onclick = async ()=>{
-    try{
-      if (!navigator.xr || !(await navigator.xr.isSessionSupported('immersive-ar'))){
-        if (showNative){ location.href = buildNativeLink(cfg); return; }
-        throw new Error('WebXR (AR) wird nicht unterstützt.');
-      }
-      await loadModel(cfg);   // Ghost sofort sichtbar
-      overlay.el.style.display = 'none';
-      hint.style.display = 'block';
-      await startXR(cfg);
-
-      // „onStart“ ist jetzt sinnvoll nutzbar, Modell ist geladen
-      const start = String(cfg.animation?.start || 'onPlace').toLowerCase();
-      if (start === 'onstart'){ startAnimation(cfg); }
-    }catch(e){ showErr(e?.message||String(e)); }
-  };
-}
-
-/* ===== Boot ===== */
-let _cfgRef = null;
-(async ()=>{
-  try{
-    const cfg = await loadConfig();
-    normalizeCfg(cfg);
-    _cfgRef = cfg;
-    wireHud(cfg);
-    wireOverlay(cfg);
-    // Immer Overlay zeigen (Poster oder nur OK)
-    overlay.el.style.display = 'flex';
-    if (!cfg.ui?.welcome?.poster){
-      overlay.poster.style.display = 'none';
-    }
-  }catch(e){
-    showErr(e?.message||String(e));
-  }
-})();
+  // HUD-Interaktion
+  btnPlay.addEventListener('click', ()=>{
+    if (mv.paused) mv.play(); else mv.pause();
+  });
+  btnMute.addEventListener('click', ()=>{
+    setMuted(!muted);
+  });
 </script>
 </body>
 </html>
