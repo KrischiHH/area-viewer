@@ -42,8 +42,14 @@ jobs:
         run: |
           if command -v realityconverter >/dev/null 2>&1; then
             echo "Reality Converter found, converting..."
-            realityconverter -i scene.glb -o model.usdz || realityconverter --input scene.glb --output model.usdz
-            test -f model.usdz && echo "ok=true" >> $GITHUB_OUTPUT || echo "ok=false" >> $GITHUB_OUTPUT
+            if realityconverter -i scene.glb -o model.usdz 2>/dev/null; then
+              echo "ok=true" >> $GITHUB_OUTPUT
+            elif realityconverter --input scene.glb --output model.usdz 2>/dev/null; then
+              echo "ok=true" >> $GITHUB_OUTPUT
+            else
+              echo "Reality Converter failed"
+              echo "ok=false" >> $GITHUB_OUTPUT
+            fi
           else
             echo "Reality Converter not found"
             echo "ok=false" >> $GITHUB_OUTPUT
@@ -61,15 +67,24 @@ jobs:
           set -euo pipefail
           mkdir build
           # Convert GLB to USD (binary preferred)
-          if usd_from_gltf scene.glb build/scene.usdc; then
+          if usd_from_gltf scene.glb build/scene.usdc 2>/dev/null; then
             ROOT=build/scene.usdc
-          else
-            usd_from_gltf scene.glb build/scene.usd
+          elif usd_from_gltf scene.glb build/scene.usd; then
             ROOT=build/scene.usd
+          else
+            echo "Failed to convert GLB to USD"
+            exit 1
+          fi
+          # Verify conversion succeeded
+          if [ ! -f "$ROOT" ]; then
+            echo "USD file not created: $ROOT"
+            exit 1
           fi
           # Package to USDZ (include root; referenced assets in same dir are picked if passed explicitly)
-          if compgen -G "build/*.{png,jpg,jpeg,webp}" > /dev/null; then
-            usdzip -o model.usdz "$ROOT" build/*.{png,jpg,jpeg,webp}
+          shopt -s nullglob
+          IMAGES=(build/*.png build/*.jpg build/*.jpeg build/*.webp)
+          if [ ${#IMAGES[@]} -gt 0 ]; then
+            usdzip -o model.usdz "$ROOT" "${IMAGES[@]}"
           else
             usdzip -o model.usdz "$ROOT"
           fi
