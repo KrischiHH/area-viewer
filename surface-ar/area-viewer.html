@@ -55,6 +55,17 @@
   const isDataOrBlob = (u)=> u.startsWith('data:') || u.startsWith('blob:');
   const endsWithAny = (u,exts)=> exts.some(ext=> u.toLowerCase().endsWith(ext));
 
+const qs = new URLSearchParams(location.search);
+
+// NEU: Dev-Mode & Cache‑Buster
+const devParam = qs.get('dev');
+const DEV = qs.has('dev') && (devParam === null || devParam === '' || devParam === '1' || devParam === 'true');
+function bust(u){
+  if (!DEV) return u;
+  const sep = u.includes('?') ? '&' : '?';
+  return u + sep + 'v=' + Date.now();
+}
+
   let SCENE_GLB = '';
   let SCENE_JSON = '';
 
