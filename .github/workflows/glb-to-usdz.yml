@@ -21,6 +21,9 @@ on:
 jobs:
   convert:
     runs-on: macos-latest
+    permissions:
+      contents: read
+      actions: read
     steps:
       - name: Prepare inputs
         id: prep
