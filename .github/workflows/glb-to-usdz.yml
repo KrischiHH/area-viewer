@@ -40,25 +40,24 @@ jobs:
         id: rc
         continue-on-error: true
         run: |
+          SUCCESS=false
           if command -v realityconverter >/dev/null 2>&1; then
             echo "Reality Converter found, converting..."
             if realityconverter -i scene.glb -o model.usdz 2>/dev/null; then
-              echo "ok=true" >> $GITHUB_OUTPUT
+              SUCCESS=true
             elif realityconverter --input scene.glb --output model.usdz 2>/dev/null; then
-              echo "ok=true" >> $GITHUB_OUTPUT
+              SUCCESS=true
             else
               echo "Reality Converter failed"
-              echo "ok=false" >> $GITHUB_OUTPUT
             fi
           else
             echo "Reality Converter not found"
-            echo "ok=false" >> $GITHUB_OUTPUT
           fi
+          echo "ok=$SUCCESS" >> $GITHUB_OUTPUT
 
       - name: Install USD (Homebrew)
         if: steps.rc.outputs.ok != 'true'
         run: |
-          brew update
           brew install usd
 
       - name: Convert via usd_from_gltf + usdzip
@@ -67,10 +66,13 @@ jobs:
           set -euo pipefail
           mkdir build
           # Convert GLB to USD (binary preferred)
-          if usd_from_gltf scene.glb build/scene.usdc 2>/dev/null; then
+          echo "Attempting USD conversion..."
+          if usd_from_gltf scene.glb build/scene.usdc; then
             ROOT=build/scene.usdc
+            echo "Converted to binary USD: $ROOT"
           elif usd_from_gltf scene.glb build/scene.usd; then
             ROOT=build/scene.usd
+            echo "Converted to text USD: $ROOT"
           else
             echo "Failed to convert GLB to USD"
             exit 1
@@ -84,8 +86,10 @@ jobs:
           shopt -s nullglob
           IMAGES=(build/*.png build/*.jpg build/*.jpeg build/*.webp)
           if [ ${#IMAGES[@]} -gt 0 ]; then
+            echo "Packaging USD with ${#IMAGES[@]} image(s)..."
             usdzip -o model.usdz "$ROOT" "${IMAGES[@]}"
           else
+            echo "Packaging USD without additional images..."
             usdzip -o model.usdz "$ROOT"
           fi
           ls -lh model.usdz
