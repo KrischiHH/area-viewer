@@ -1,0 +1,99 @@
+name: Convert GLB to USDZ and republish
+
+on:
+  workflow_dispatch:
+    inputs:
+      scene_id:
+        description: "Scene ID (folder under /scenes/)"
+        required: true
+        type: string
+      base:
+        description: "Worker base that serves /scenes (default: https://area-publish.area-webar.workers.dev)"
+        required: false
+        default: "https://area-publish.area-webar.workers.dev"
+        type: string
+      publish_url:
+        description: "Publish endpoint (default: https://area-publish-proxy.area-webar.workers.dev/publish)"
+        required: false
+        default: "https://area-publish-proxy.area-webar.workers.dev/publish"
+        type: string
+
+jobs:
+  convert:
+    runs-on: macos-latest
+    steps:
+      - name: Prepare inputs
+        id: prep
+        run: |
+          echo "SCENE_ID=${{ github.event.inputs.scene_id }}" >> $GITHUB_ENV
+          echo "BASE=${{ github.event.inputs.base || 'https://area-publish.area-webar.workers.dev' }}" >> $GITHUB_ENV
+          echo "PUBLISH_URL=${{ github.event.inputs.publish_url || 'https://area-publish-proxy.area-webar.workers.dev/publish' }}" >> $GITHUB_ENV
+
+      - name: Fetch scene files
+        run: |
+          set -euo pipefail
+          curl -fsSL "$BASE/scenes/$SCENE_ID/scene.glb" -o scene.glb
+          curl -fsSL "$BASE/scenes/$SCENE_ID/scene.json" -o scene.json
+          ls -lh
+
+      - name: Try Reality Converter CLI
+        id: rc
+        continue-on-error: true
+        run: |
+          if command -v realityconverter >/dev/null 2>&1; then
+            echo "Reality Converter found, converting..."
+            realityconverter -i scene.glb -o model.usdz || realityconverter --input scene.glb --output model.usdz
+            test -f model.usdz && echo "ok=true" >> $GITHUB_OUTPUT || echo "ok=false" >> $GITHUB_OUTPUT
+          else
+            echo "Reality Converter not found"
+            echo "ok=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Install USD (Homebrew)
+        if: steps.rc.outputs.ok != 'true'
+        run: |
+          brew update
+          brew install usd
+
+      - name: Convert via usd_from_gltf + usdzip
+        if: steps.rc.outputs.ok != 'true'
+        run: |
+          set -euo pipefail
+          mkdir build
+          # Convert GLB to USD (binary preferred)
+          if usd_from_gltf scene.glb build/scene.usdc; then
+            ROOT=build/scene.usdc
+          else
+            usd_from_gltf scene.glb build/scene.usd
+            ROOT=build/scene.usd
+          fi
+          # Package to USDZ (include root; referenced assets in same dir are picked if passed explicitly)
+          if compgen -G "build/*.{png,jpg,jpeg,webp}" > /dev/null; then
+            usdzip -o model.usdz "$ROOT" build/*.{png,jpg,jpeg,webp}
+          else
+            usdzip -o model.usdz "$ROOT"
+          fi
+          ls -lh model.usdz
+
+      - name: Republish with USDZ
+        env:
+          PUBLISH_URL: ${{ env.PUBLISH_URL }}
+          PUBLISH_KEY: ${{ secrets.PUBLISH_KEY }}
+          SCENE_ID: ${{ env.SCENE_ID }}
+        run: |
+          set -euo pipefail
+          if [ -z "${PUBLISH_KEY:-}" ]; then echo "Missing PUBLISH_KEY secret"; exit 1; fi
+          curl -fsS -X POST "$PUBLISH_URL" \
+            -H "X-AREA-Key: $PUBLISH_KEY" \
+            -F "sceneId=$SCENE_ID" \
+            -F "file=@scene.json;type=application/json;filename=scene.json" \
+            -F "file=@scene.glb;type=model/gltf-binary;filename=scene.glb" \
+            -F "file=@model.usdz;type=model/vnd.usdz+zip;filename=model.usdz" \
+            -o publish.json
+          cat publish.json
+
+      - name: Upload USDZ artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: usdz-${{ env.SCENE_ID }}
+          path: model.usdz
