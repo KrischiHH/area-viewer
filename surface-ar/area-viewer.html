@@ -14,7 +14,6 @@
       position:absolute; left:max(12px,env(safe-area-inset-left)); top:max(12px,env(safe-area-inset-top));
       padding:.75rem 1rem; border-radius:12px; border:1px solid rgba(255,255,255,.25); background:#111; color:#fff
     }
-    /* HUD */
     #hud{position:fixed; right:max(12px,env(safe-area-inset-right)); bottom:max(12px,env(safe-area-inset-bottom));
       display:flex; gap:8px; z-index:3; background:rgba(0,0,0,.35); border:1px solid rgba(255,255,255,.15);
       padding:6px; border-radius:999px; backdrop-filter:blur(6px)}
@@ -40,7 +39,6 @@
     <button slot="ar-button" id="arBtn">In AR öffnen</button>
   </model-viewer>
 
-  <!-- Mini-HUD -->
   <div id="hud" class="hidden">
     <button id="btnPlay" title="Play/Pause">▶︎/⏸</button>
     <button id="btnMute" title="Ton an/aus">🔊</button>
@@ -75,7 +73,7 @@
     }
   }
 
-  const showErr = (m)=>{ const el=document.getElementById('err'); el.textContent=m; el.style.display='block'; };
+  const err = (m)=>{ const el=document.getElementById('err'); el.textContent=m; el.style.display='block'; console.error('[area-viewer]', m); };
 
   const mv = document.getElementById('mv');
   const hud = document.getElementById('hud');
@@ -83,20 +81,17 @@
   const btnMute = document.getElementById('btnMute');
   const arBtn   = document.getElementById('arBtn');
 
-  // Basiskonfig mit UI/Audio-Flags wie im Native Viewer
+  // Basis-Config
   let cfg = {
     model:{ url: SCENE_GLB || "https://modelviewer.dev/shared-assets/models/Astronaut.glb", usdzUrl:null, animation:"*" },
     target:{ previewUrl:null },
     audio:{ src:null, autoplay:"withAnimation", loop:true, volume:0.85 },
-    ui:{
-      showPlayPause:false,
-      showMute:false,
-      showAR:true,
-      arLabel:"In AR öffnen"
-    }
+    ui:{ showPlayPause:false, showMute:false, showAR:true, arLabel:"In AR öffnen" },
+    animation:{ start:'onPlace' }
   };
+  let uiExplicitPlayPause=false, uiExplicitMute=false;
 
-  // Audio-Objekt (optional)
+  // Audio
   let audio=null, audioReady=false, muted=false;
   function setupAudio(){
     if (!cfg.audio?.src) return;
@@ -114,10 +109,8 @@
 
   (async () => {
     try {
-      // 1) Wenn GLB ermittelt → direkt setzen (mit .glb-Hint)
       if (SCENE_GLB) mv.src = SCENE_GLB + '#.glb';
 
-      // 2) Optional JSON laden
       if (SCENE_JSON) {
         const r = await fetch(SCENE_JSON, { cache: 'no-cache' });
         if (!r.ok) throw new Error(r.status + ' ' + r.statusText);
@@ -127,81 +120,92 @@
         if (j.target) Object.assign(cfg.target, j.target);
         if (j.audio)  Object.assign(cfg.audio,  j.audio);
 
-        // UI-Felder flexibel lesen (legacy + neu)
         if (j.ui){
-          if ('showPlayPause' in j.ui) cfg.ui.showPlayPause = !!j.ui.showPlayPause;
-          if ('showMute'      in j.ui) cfg.ui.showMute      = !!j.ui.showMute;
-          if ('showAR'        in j.ui) cfg.ui.showAR        = !!j.ui.showAR;
-          if (j.ui.arLabel)           cfg.ui.arLabel       = String(j.ui.arLabel);
+          if ('showPlayPause' in j.ui){ cfg.ui.showPlayPause = !!j.ui.showPlayPause; uiExplicitPlayPause=true; }
+          if ('showMute'      in j.ui){ cfg.ui.showMute      = !!j.ui.showMute;      uiExplicitMute=true; }
+          if ('showAR'        in j.ui) cfg.ui.showAR = !!j.ui.showAR;
+          if (j.ui.arLabel)           cfg.ui.arLabel = String(j.ui.arLabel);
           if (j.ui.controls){
-            if ('showPlay' in j.ui.controls) cfg.ui.showPlayPause = !!j.ui.controls.showPlay;
-            if ('showMute' in j.ui.controls) cfg.ui.showMute      = !!j.ui.controls.showMute;
+            if ('showPlay' in j.ui.controls){ cfg.ui.showPlayPause = !!j.ui.controls.showPlay; uiExplicitPlayPause=true; }
+            if ('showMute' in j.ui.controls){ cfg.ui.showMute      = !!j.ui.controls.showMute; uiExplicitMute=true; }
           }
+        }
+
+        // WICHTIG: Animation aus scene.json übernehmen
+        if (j.animation){
+          if ('clipName' in j.animation) cfg.model.animation = j.animation.clipName;
+          Object.assign(cfg.animation, j.animation);
         }
 
         if (!SCENE_GLB && cfg.model.url) mv.src = cfg.model.url + '#.glb';
       }
 
-      // 3) USDZ/Poster
       const usdz = overrideUsdz || cfg.model.usdzUrl;
       if (usdz) mv.setAttribute('ios-src', usdz); else mv.removeAttribute('ios-src');
       if (cfg.target?.previewUrl) mv.setAttribute('poster', cfg.target.previewUrl);
 
-      // 4) AR-Button Sichtbarkeit/Label
-      if (!cfg.ui.showAR) {
-        mv.removeAttribute('ar');
-        arBtn.style.display = 'none';
-      } else {
-        arBtn.textContent = cfg.ui.arLabel || 'In AR öffnen';
-      }
+      if (!cfg.ui.showAR) { mv.removeAttribute('ar'); arBtn.style.display='none'; }
+      else { arBtn.textContent = cfg.ui.arLabel || 'In AR öffnen'; }
 
-      // 5) Audio einrichten (optional)
       if (cfg.audio?.src) setupAudio();
 
-      // 6) HUD-Buttons sichtbar je nach Flags
-      const showPlay = !!cfg.ui.showPlayPause;
-      const showMute = !!cfg.ui.showMute && !!cfg.audio?.src;
-      btnPlay.style.display = showPlay ? '' : 'none';
-      btnMute.style.display = showMute ? '' : 'none';
-      hud.classList.toggle('hidden', !(showPlay || showMute));
+      const showMuteInitial = uiExplicitMute ? cfg.ui.showMute : !!cfg.audio?.src;
+      btnMute.style.display = showMuteInitial ? '' : 'none';
 
     } catch (e) {
-      showErr('scene.json konnte nicht geladen werden: ' + e.message);
+      err('scene.json konnte nicht geladen werden: ' + e.message);
       console.error(e);
     }
   })();
 
-  // Wenn Model geladen ist, Animationen zuweisen & Play/Mute koppeln
   mv.addEventListener('load', ()=>{
-    // Kamera-Defaults
     mv.cameraOrbit = '0deg 70deg auto';
     mv.cameraTarget = 'auto';
     mv.fieldOfView  = '30deg';
     mv.jumpCameraToGoal();
 
     const names = mv.availableAnimations || [];
-    const sel = cfg.model.animation;
+    console.log('[area-viewer] availableAnimations:', names);
 
-    // Animation auswählen
-    if (sel === 'none'){ mv.autoplay=false; mv.animationName=null; return; }
-    if (sel === '*' || sel==null){
-      if (names.length){ mv.animationName = names[0]; mv.autoplay=true; }
-    } else if (typeof sel === 'string'){
-      mv.animationName = names.includes(sel) ? sel : (names[0] || null);
-      mv.autoplay = !!mv.animationName;
-    } else {
-      const idx = Math.max(0, Math.min(names.length-1, parseInt(sel||0,10)));
-      mv.animationName = names[idx] || null;
-      mv.autoplay = !!mv.animationName;
+    const sel = cfg.model.animation;
+    let chosen = null;
+
+    if (sel === 'none') {
+      chosen = null; mv.autoplay = false;
+    } else if (sel === '*' || sel == null) {
+      chosen = names[0] || null; mv.autoplay = !!chosen;
+    } else if (typeof sel === 'string') {
+      if (/^\d+$/.test(sel)) {
+        const idx = Math.max(0, Math.min(names.length-1, parseInt(sel,10)));
+        chosen = names[idx] || null;
+      } else {
+        chosen = names.includes(sel) ? sel : (names[0] || null);
+      }
+      mv.autoplay = !!chosen;
+    } else if (Number.isFinite(sel)) {
+      const idx = Math.max(0, Math.min(names.length-1, sel|0));
+      chosen = names[idx] || null; mv.autoplay = !!chosen;
     }
 
-    // Audio-Autoplay
+    mv.animationName = chosen;
+    const startMode = String(cfg?.animation?.start || '').toLowerCase();
+    console.log('[area-viewer] chosen:', chosen, 'startMode:', startMode);
+
+    if (startMode === 'manual') {
+      mv.autoplay = false;
+      try{ mv.pause(); }catch{}
+    }
+
+    const showPlay = uiExplicitPlayPause ? cfg.ui.showPlayPause : (names.length > 0);
+    btnPlay.style.display = showPlay ? '' : 'none';
+    const anyHud = (btnPlay.style.display !== 'none') || (btnMute.style.display !== 'none');
+    hud.classList.toggle('hidden', !anyHud);
+
     if (audio && cfg.audio.autoplay === 'auto'){
       const kick = ()=>{ try{ audio.play(); }catch{} window.removeEventListener('pointerdown', kick); };
       window.addEventListener('pointerdown', kick, { once:true });
     }
 
-    // Events koppeln: Animation ↔ Audio (withAnimation)
     mv.addEventListener('play', ()=>{
       if (audio && cfg.audio.autoplay === 'withAnimation' && !audio.muted){
         try{ audio.play(); }catch{}
@@ -216,13 +220,10 @@
     });
   });
 
-  // HUD-Interaktion
   btnPlay.addEventListener('click', ()=>{
     if (mv.paused) mv.play(); else mv.pause();
   });
-  btnMute.addEventListener('click', ()=>{
-    setMuted(!muted);
-  });
+  btnMute.addEventListener('click', ()=>{ setMuted(!muted); });
 </script>
 </body>
 </html>
