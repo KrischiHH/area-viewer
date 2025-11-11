@@ -1,232 +1,250 @@
 <!doctype html>
-<html lang="de">
+<html lang="de" class="theme-slate">
 <head>
-  <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-  <title>ARea Viewer – Surface AR (Native Baseline)</title>
-  <script type="module" src="https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js"></script>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ARea Viewer – Drop-in (Animation Fix)</title>
   <style>
-    :root{color-scheme:dark light}
-    *,*::before,*::after{box-sizing:border-box}
-    html,body{margin:0;height:100%;background:#000;font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
-    model-viewer{position:fixed; inset:0; width:100vw; height:100svh; display:block; background:#000}
-    button[slot="ar-button"]{
-      position:absolute; left:max(12px,env(safe-area-inset-left)); top:max(12px,env(safe-area-inset-top));
-      padding:.75rem 1rem; border-radius:12px; border:1px solid rgba(255,255,255,.25); background:#111; color:#fff
+    :root { color-scheme: dark; }
+    :root.theme-slate{
+      --bg:#0b1020; --panel:#10172a; --text:#e6edf3; --muted:#94a3b8; --accent:#5b9dff; --border:#20304b;
     }
-    #hud{position:fixed; right:max(12px,env(safe-area-inset-right)); bottom:max(12px,env(safe-area-inset-bottom));
-      display:flex; gap:8px; z-index:3; background:rgba(0,0,0,.35); border:1px solid rgba(255,255,255,.15);
-      padding:6px; border-radius:999px; backdrop-filter:blur(6px)}
-    #hud.hidden{display:none}
-    #hud button{all:unset; cursor:pointer; padding:8px 12px; border-radius:10px; color:#fff; user-select:none}
-    #err{position:fixed;left:12px;top:12px;z-index:9;background:#b00020;color:#fff;padding:8px 10px;border-radius:8px;display:none;font:12px/1.35 monospace;max-width:min(92vw,680px);white-space:pre-wrap}
+    html,body { height:100%; margin:0; background:var(--bg); color:var(--text); font-family:ui-sans-serif,system-ui,Segoe UI,Roboto,Helvetica,Arial; }
+    #app { position:fixed; inset:0; }
+    canvas { display:block; width:100%; height:100%; }
+    .hud {
+      position:fixed; inset:16px auto auto 16px; padding:10px 12px;
+      background:color-mix(in hsl, var(--panel) 88%, transparent);
+      border:1px solid var(--border); border-radius:12px; backdrop-filter: blur(8px);
+      box-shadow: 0 6px 24px rgba(0,0,0,.25); font-size:14px; user-select:none;
+    }
+    .hud code{ padding:.15em .4em; background:#0006; border:1px solid #ffffff1a; border-radius:8px; font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; }
+    .tapgate {
+      position:fixed; inset:0; display:none; place-items:center; z-index:20;
+      background:linear-gradient(180deg, rgba(7,12,24,.75), rgba(7,12,24,.85));
+      color:var(--text);
+    }
+    .tapgate.show { display:grid; }
+    .card {
+      width:min(520px, 92vw); padding:20px; border-radius:16px; border:1px solid var(--border);
+      background:color-mix(in hsl, var(--panel) 92%, transparent);
+      box-shadow: 0 10px 30px rgba(0,0,0,.35); text-align:center;
+    }
+    .btn {
+      display:inline-flex; align-items:center; gap:.5rem; margin-top:12px; padding:10px 14px;
+      border-radius:12px; border:1px solid var(--border); background:var(--accent); color:#081018;
+      font-weight:600; cursor:pointer;
+    }
+    .btn:active { transform:translateY(1px); }
+    .toast {
+      position:fixed; right:16px; bottom:16px; padding:10px 12px; border-radius:12px; border:1px solid var(--border);
+      background:color-mix(in hsl, var(--panel) 92%, transparent); box-shadow:0 6px 22px rgba(0,0,0,.25);
+      font-size:13px; opacity:0; transform:translateY(10px); transition:all .3s ease; z-index:30;
+    }
+    .toast.show { opacity:1; transform:translateY(0); }
+    a{ color:var(--accent); text-decoration:none; }
   </style>
 </head>
 <body>
-  <div id="err"></div>
+  <div id="app"></div>
 
-  <model-viewer id="mv"
-    src="https://modelviewer.dev/shared-assets/models/Astronaut.glb"
-    ar ar-modes="scene-viewer quick-look webxr"
-    camera-controls autoplay
-    environment-image="https://modelviewer.dev/shared-assets/environments/neutral.hdr"
-    exposure="1" shadow-intensity="1"
-    interaction-prompt="none"
-    camera-orbit="0deg 70deg auto"
-    camera-target="auto"
-    field-of-view="30deg"
-    poster="">
-    <button slot="ar-button" id="arBtn">In AR öffnen</button>
-  </model-viewer>
-
-  <div id="hud" class="hidden">
-    <button id="btnPlay" title="Play/Pause">▶︎/⏸</button>
-    <button id="btnMute" title="Ton an/aus">🔊</button>
+  <div class="hud" id="hud">
+    <div><strong>ARea Viewer – Animation Fix</strong></div>
+    <div style="opacity:.8;margin-top:.35rem">
+      Lädt <code>scene.json</code> (oder <code>?scene=…</code>) und <code>scene.glb</code>.<br/>
+      Animationen per <code>onStart</code>/<code>onClick</code>. Fallback: <em>alle Clips</em> abspielen.
+    </div>
   </div>
 
-<script>
-  const qs = new URLSearchParams(location.search);
-  const devParam = qs.get('dev');
-  const DEV = qs.has('dev') && (devParam === null || devParam === '' || devParam === '1' || devParam === 'true');
-  function bust(u){
-    if (!DEV) return u;
-    const sep = u.includes('?') ? '&' : '?';
-    return u + sep + 'v=' + Date.now();
-  }
+  <div class="tapgate" id="tapgate" role="dialog" aria-modal="true" aria-label="Zum Starten tippen">
+    <div class="card">
+      <h2 style="margin:0 0 8px 0">Tippen zum Starten</h2>
+      <p style="margin:0 0 12px 0; color:var(--muted)">Deine Szene wartet auf einen Nutzer-Klick (<code>start:"onClick"</code>).</p>
+      <button class="btn" id="startBtn" type="button">▶ Animation starten</button>
+      <div style="margin-top:10px; font-size:12px; color:var(--muted)">Falls nichts passiert: Prüfe Clip-Namen in <code>scene.json</code>.</div>
+    </div>
+  </div>
 
-  let scene = (qs.get('scene') || qs.get('src') || '').trim();
-  const workerBase = (qs.get('base') || 'https://area-publish.area-webar.workers.dev').replace(/\/$/, '');
-  const overrideGlb  = (qs.get('glb')  || '').trim();
-  const overrideUsdz = (qs.get('usdz') || '').trim();
+  <div class="toast" id="toast"></div>
 
-  const isHttp = (u)=> /^https?:\/\//i.test(u);
-  const isDataOrBlob = (u)=> u.startsWith('data:') || u.startsWith('blob:');
-  const endsWithAny = (u,exts)=> exts.some(ext=> u.toLowerCase().endsWith(ext));
+  <script type="module">
+    import * as THREE from 'https://unpkg.com/three@0.160.0/build/three.module.js';
+    import { OrbitControls } from 'https://unpkg.com/three@0.160.0/examples/jsm/controls/OrbitControls.js';
+    import { GLTFLoader } from 'https://unpkg.com/three@0.160.0/examples/jsm/loaders/GLTFLoader.js';
 
-  let SCENE_GLB = '';
-  let SCENE_JSON = '';
+    const qs = new URLSearchParams(location.search);
+    const sceneJsonUrl = qs.get('scene') || 'scene.json';
 
-  if (overrideGlb) {
-    SCENE_GLB = overrideGlb;
-  } else if (scene) {
-    if (isDataOrBlob(scene)) {
-      SCENE_JSON = scene;
-    } else if (isHttp(scene)) {
-      if (endsWithAny(scene, ['.glb','.gltf'])) SCENE_GLB = scene;
-      else SCENE_JSON = scene;
-    } else {
-      const id = scene.replace(/\/+$/,'');
-      SCENE_GLB  = `${workerBase}/scenes/${encodeURIComponent(id)}/scene.glb`;
-      SCENE_JSON = `${workerBase}/scenes/${encodeURIComponent(id)}/scene.json`;
+    const elApp = document.getElementById('app');
+    const elTap = document.getElementById('tapgate');
+    const elStart = document.getElementById('startBtn');
+    const elToast = document.getElementById('toast');
+
+    const showToast = (msg) => {
+      elToast.textContent = msg;
+      elToast.classList.add('show');
+      clearTimeout(showToast._t);
+      showToast._t = setTimeout(()=>elToast.classList.remove('show'), 3000);
+    };
+
+    function normalizeAnimation(a = {}) {
+      const out = { ...a };
+      out.enabled = a.enabled !== false;
+      out.loop = !!a.loop;
+      out.iterations = out.loop ? Math.max(1, Number(a.iterations) || 9999) : 1;
+      out.start = (a.start === 'onClick') ? 'onClick' : 'onStart';
+      if (typeof out.clip !== 'string') out.clip = null;
+      return out;
     }
-  }
 
-  const err = (m)=>{ const el=document.getElementById('err'); el.textContent=m; el.style.display='block'; console.error('[area-viewer]', m); };
+    function resolveRelative(baseUrl, file) {
+      try { return new URL(file, baseUrl).toString(); } catch { return file; }
+    }
 
-  const mv = document.getElementById('mv');
-  const hud = document.getElementById('hud');
-  const btnPlay = document.getElementById('btnPlay');
-  const btnMute = document.getElementById('btnMute');
-  const arBtn   = document.getElementById('arBtn');
+    const renderer = new THREE.WebGLRenderer({ antialias:true, alpha:false });
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    renderer.setSize(innerWidth, innerHeight);
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    elApp.appendChild(renderer.domElement);
 
-  let cfg = {
-    model:{ url: SCENE_GLB || "https://modelviewer.dev/shared-assets/models/Astronaut.glb", usdzUrl:null, animation:"*" },
-    target:{ previewUrl:null },
-    audio:{ src:null, autoplay:"withAnimation", loop:true, volume:0.85 },
-    ui:{ showPlayPause:false, showMute:false, showAR:true, arLabel:"In AR öffnen" },
-    animation:{ start:'onPlace' }
-  };
-  let uiExplicitPlayPause=false, uiExplicitMute=false;
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x0b1020);
 
-  let audio=null, audioReady=false, muted=false;
-  function setupAudio(){
-    if (!cfg.audio?.src) return;
-    audio = new Audio(cfg.audio.src);
-    audio.crossOrigin = "anonymous";
-    audio.loop = !!cfg.audio.loop;
-    audio.volume = Number.isFinite(cfg.audio.volume) ? cfg.audio.volume : 0.85;
-    audioReady = true;
-  }
-  function setMuted(on){
-    muted = !!on;
-    if (audio && audioReady) audio.muted = muted;
-    btnMute.textContent = muted ? '🔈' : '🔊';
-  }
+    const camera = new THREE.PerspectiveCamera(60, innerWidth/innerHeight, 0.1, 1000);
+    camera.position.set(1.8, 1.4, 2.8);
 
-  (async () => {
-    try {
-      if (SCENE_GLB) mv.src = bust(SCENE_GLB) + '#.glb';
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
 
-      if (SCENE_JSON) {
-        const r = await fetch(bust(SCENE_JSON), { cache: 'no-cache' });
-        if (!r.ok) throw new Error(r.status + ' ' + r.statusText);
-        const j = await r.json();
+    const hemi = new THREE.HemisphereLight(0xffffff, 0x223344, 0.8);
+    const dir = new THREE.DirectionalLight(0xffffff, 1.2);
+    dir.position.set(3, 5, 3);
+    scene.add(hemi, dir);
 
-        if (j.model)  Object.assign(cfg.model,  j.model);
-        if (j.target) Object.assign(cfg.target, j.target);
-        if (j.audio)  Object.assign(cfg.audio,  j.audio);
+    const ground = new THREE.Mesh(new THREE.CircleGeometry(5, 64), new THREE.MeshBasicMaterial({ color: 0x0f162b }));
+    ground.rotation.x = -Math.PI/2;
+    scene.add(ground);
 
-        if (j.ui){
-          if ('showPlayPause' in j.ui){ cfg.ui.showPlayPause = !!j.ui.showPlayPause; uiExplicitPlayPause=true; }
-          if ('showMute'      in j.ui){ cfg.ui.showMute      = !!j.ui.showMute;      uiExplicitMute=true; }
-          if ('showAR'        in j.ui) cfg.ui.showAR = !!j.ui.showAR;
-          if (j.ui.arLabel)           cfg.ui.arLabel = String(j.ui.arLabel);
-          if (j.ui.controls){
-            if ('showPlay' in j.ui.controls){ cfg.ui.showPlayPause = !!j.ui.controls.showPlay; uiExplicitPlayPause=true; }
-            if ('showMute' in j.ui.controls){ cfg.ui.showMute      = !!j.ui.controls.showMute; uiExplicitMute=true; }
-          }
-        }
+    let mixer = null;
+    const actions = [];
 
-        if (j.animation){
-          if ('clipName' in j.animation) cfg.model.animation = j.animation.clipName;
-          Object.assign(cfg.animation, j.animation);
-        }
-
-        if (!SCENE_GLB && cfg.model.url) mv.src = bust(cfg.model.url) + '#.glb';
+    function applyAnimation(glb, metaList) {
+      if (!glb.animations || glb.animations.length === 0) {
+        showToast('Keine Clips im GLB gefunden.');
+        console.warn('⚠️ Keine GLB-Animationen vorhanden.');
+        return;
       }
+      mixer = new THREE.AnimationMixer(glb.scene);
 
-      const usdz = overrideUsdz || cfg.model.usdzUrl;
-      if (usdz) mv.setAttribute('ios-src', usdz); else mv.removeAttribute('ios-src');
-      if (cfg.target?.previewUrl) mv.setAttribute('poster', cfg.target.previewUrl);
+      const byName = new Map(glb.animations.map(c => [c.name, c]));
+      const explicit = metaList.map(normalizeAnimation).filter(m => m.enabled && m.clip);
+      const anyClick = (list) => list.some(m => m.start === 'onClick');
+      const anyAuto  = (list) => list.some(m => m.start === 'onStart');
 
-      if (!cfg.ui.showAR) { mv.removeAttribute('ar'); arBtn.style.display='none'; }
-      else { arBtn.textContent = cfg.ui.arLabel || 'In AR öffnen'; }
-
-      if (cfg.audio?.src) setupAudio();
-
-      const showMuteInitial = uiExplicitMute ? cfg.ui.showMute : !!cfg.audio?.src;
-      btnMute.style.display = showMuteInitial ? '' : 'none';
-
-    } catch (e) {
-      err('scene.json konnte nicht geladen werden: ' + e.message);
-      console.error(e);
-    }
-  })();
-
-  mv.addEventListener('load', ()=>{
-    mv.cameraOrbit = '0deg 70deg auto';
-    mv.cameraTarget = 'auto';
-    mv.fieldOfView  = '30deg';
-    mv.jumpCameraToGoal();
-
-    const names = mv.availableAnimations || [];
-    console.log('[area-viewer] availableAnimations:', names);
-
-    const sel = cfg.model.animation;
-    let chosen = null;
-
-    if (sel === 'none') {
-      chosen = null; mv.autoplay = false;
-    } else if (sel === '*' || sel == null) {
-      chosen = names[0] || null; mv.autoplay = !!chosen;
-    } else if (typeof sel === 'string') {
-      if (/^\d+$/.test(sel)) {
-        const idx = Math.max(0, Math.min(names.length-1, parseInt(sel,10)));
-        chosen = names[idx] || null;
+      if (explicit.length) {
+        console.log('🎬 Explizite Clips aus scene.json:', explicit.map(m=>m.clip));
+        explicit.forEach(meta => {
+          const clip = byName.get(meta.clip);
+          if (!clip) { console.warn('❌ Clip nicht gefunden:', meta.clip); return; }
+          const act = mixer.clipAction(clip);
+          if (meta.loop) { act.setLoop(THREE.LoopRepeat, meta.iterations); act.clampWhenFinished = false; }
+          else { act.setLoop(THREE.LoopOnce, 0); act.clampWhenFinished = true; }
+          act.enabled = true; act.reset();
+          actions.push({ meta, action: act });
+        });
       } else {
-        chosen = names.includes(sel) ? sel : (names[0] || null);
+        // Fallback: ALLE Clips spielen
+        const base = normalizeAnimation(metaList[0] || { loop:true, iterations:9999, start:'onStart' });
+        console.log(`🎯 Keine spezifischen Clips → Fallback: ALLE ${glb.animations.length} Clips`, base);
+        glb.animations.forEach(clip => {
+          const meta = { ...base, clip: clip.name };
+          const act = mixer.clipAction(clip);
+          if (meta.loop) { act.setLoop(THREE.LoopRepeat, meta.iterations); act.clampWhenFinished = false; }
+          else { act.setLoop(THREE.LoopOnce, 0); act.clampWhenFinished = true; }
+          act.enabled = true; act.reset();
+          actions.push({ meta, action: act });
+        });
       }
-      mv.autoplay = !!chosen;
-    } else if (Number.isFinite(sel)) {
-      const idx = Math.max(0, Math.min(names.length-1, sel|0));
-      chosen = names[idx] || null; mv.autoplay = !!chosen;
+
+      const hasClick = anyClick(actions.map(a=>a.meta));
+      const hasAuto  = anyAuto(actions.map(a=>a.meta));
+      console.log(`✅ Actions vorbereitet: ${actions.length} | onStart=${hasAuto} | onClick=${hasClick}`);
+
+      if (hasAuto) actions.forEach(({meta, action}) => { if (meta.start === 'onStart') action.play(); });
+      if (hasClick) showTapGate(true);
+
+      showToast(`${actions.length} Animation(en) bereit`);
     }
 
-    mv.animationName = chosen;
-    const startMode = String(cfg?.animation?.start || '').toLowerCase();
-    console.log('[area-viewer] chosen:', chosen, 'startMode:', startMode);
-
-    if (startMode === 'manual') {
-      mv.autoplay = false;
-      try{ mv.pause(); }catch{}
+    function showTapGate(show) { document.getElementById('tapgate').classList.toggle('show', !!show); }
+    function startClickAnimations() {
+      actions.forEach(({meta, action}) => { if (meta.start === 'onClick') action.play(); });
+      showTapGate(false);
+      showToast('Animation gestartet.');
     }
+    document.getElementById('tapgate').addEventListener('click', startClickAnimations);
+    document.getElementById('startBtn').addEventListener('click', startClickAnimations);
 
-    const showPlay = uiExplicitPlayPause ? cfg.ui.showPlayPause : (names.length > 0);
-    btnPlay.style.display = showPlay ? '' : 'none';
-    const anyHud = (btnPlay.style.display !== 'none') || (btnMute.style.display !== 'none');
-    hud.classList.toggle('hidden', !anyHud);
+    const loader = new GLTFLoader();
+    loader.setCrossOrigin('anonymous');
 
-    if (audio && cfg.audio.autoplay === 'auto'){
-      const kick = ()=>{ try{ audio.play(); }catch{} window.removeEventListener('pointerdown', kick); };
-      window.addEventListener('pointerdown', kick, { once:true });
-    }
+    async function loadScene() {
+      const res = await fetch(sceneJsonUrl, { cache:'no-cache' });
+      if (!res.ok) throw new Error(`scene.json nicht gefunden (${res.status})`);
+      const data = await res.json();
+      console.log('📄 scene.json:', data);
 
-    mv.addEventListener('play', ()=>{
-      if (audio && cfg.audio.autoplay === 'withAnimation' && !audio.muted){
-        try{ audio.play(); }catch{}
+      const glbPath = data.model || data.src || data.glb || 'scene.glb';
+      const glbUrl = resolveRelative(sceneJsonUrl, glbPath);
+
+      const animationsMeta = Array.isArray(data.animations) ? data.animations : [{ clip:null, loop:true, iterations:9999, enabled:true, start:'onStart' }];
+      console.log('🎬 Anim-Meta:', animationsMeta);
+
+      const gltf = await new Promise((resolve, reject) => loader.load(glbUrl, resolve, undefined, reject));
+      console.log('📦 GLB Clips:', gltf.animations.map(c=>c.name));
+
+      if (data.modelTransform && typeof data.modelTransform === 'object') {
+        const t = data.modelTransform;
+        gltf.scene.position.set(t.x || 0, t.y || 0, t.z || 0);
+        gltf.scene.rotation.set((t.rx||0)*Math.PI/180, (t.ry||0)*Math.PI/180, (t.rz||0)*Math.PI/180);
+        if (t.s) gltf.scene.scale.setScalar(t.s);
       }
-      btnPlay.textContent = '⏸';
+
+      scene.add(gltf.scene);
+
+      try {
+        const box = new THREE.Box3().setFromObject(gltf.scene);
+        const size = new THREE.Vector3(); box.getSize(size);
+        const center = new THREE.Vector3(); box.getCenter(center);
+        const maxDim = Math.max(size.x, size.y, size.z);
+        const dist = Math.max(2.2, maxDim * 1.6);
+        camera.position.set(center.x + dist, center.y + dist * 0.6, center.z + dist);
+        camera.lookAt(center);
+        controls.target.copy(center);
+        controls.update();
+      } catch {}
+
+      applyAnimation(gltf, animationsMeta);
+      showToast('Szene geladen.');
+    }
+
+    const clock = new THREE.Clock();
+    function tick() {
+      const dt = clock.getDelta();
+      if (mixer) mixer.update(dt);
+      controls.update();
+      renderer.render(scene, camera);
+      requestAnimationFrame(tick);
+    }
+
+    addEventListener('resize', () => {
+      camera.aspect = innerWidth / innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(innerWidth, innerHeight);
     });
-    mv.addEventListener('pause', ()=>{
-      if (audio && cfg.audio.autoplay === 'withAnimation' && !audio.paused){
-        try{ audio.pause(); }catch{}
-      }
-      btnPlay.textContent = '▶︎';
-    });
-  });
 
-  btnPlay.addEventListener('click', ()=>{ if (mv.paused) mv.play(); else mv.pause(); });
-  btnMute.addEventListener('click', ()=>{ setMuted(!muted); });
-</script>
+    tick();
+    loadScene().catch(err => { console.error(err); showToast(err.message || 'Fehler beim Laden.'); });
+  </script>
 </body>
 </html>
