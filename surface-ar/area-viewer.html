@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>ARea Viewer – Animation Fixed</title>
+  <title>ARea Viewer – Drop-in (Animation Fix)</title>
   <style>
     :root { color-scheme: dark; }
     :root.theme-slate{
@@ -17,7 +17,6 @@
       background:color-mix(in hsl, var(--panel) 88%, transparent);
       border:1px solid var(--border); border-radius:12px; backdrop-filter: blur(8px);
       box-shadow: 0 6px 24px rgba(0,0,0,.25); font-size:14px; user-select:none;
-      max-width: 400px;
     }
     .hud code{ padding:.15em .4em; background:#0006; border:1px solid #ffffff1a; border-radius:8px; font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; }
     .tapgate {
@@ -50,19 +49,19 @@
   <div id="app"></div>
 
   <div class="hud" id="hud">
-    <div><strong>ARea Viewer – Animation Fixed</strong></div>
-    <div style="opacity:.8;margin-top:.35rem;font-size:12px">
-      Lädt <code>scene.json</code> + <code>scene.glb</code><br/>
-      Unterstützt: <code>?scene=ID&base=URL</code><br/>
-      Animation: <code>clip:"*"</code> = erster Clip
+    <div><strong>ARea Viewer – Animation Fix</strong></div>
+    <div style="opacity:.8;margin-top:.35rem">
+      Lädt <code>scene.json</code> (oder <code>?scene=…</code>) und <code>scene.glb</code>.<br/>
+      Animationen per <code>onStart</code>/<code>onClick</code>. Fallback: <em>alle Clips</em> abspielen.
     </div>
   </div>
 
   <div class="tapgate" id="tapgate" role="dialog" aria-modal="true" aria-label="Zum Starten tippen">
     <div class="card">
       <h2 style="margin:0 0 8px 0">Tippen zum Starten</h2>
-      <p style="margin:0 0 12px 0; color:var(--muted)">Die Animation startet per Klick (<code>start:"onClick"</code>).</p>
+      <p style="margin:0 0 12px 0; color:var(--muted)">Deine Szene wartet auf einen Nutzer-Klick (<code>start:"onClick"</code>).</p>
       <button class="btn" id="startBtn" type="button">▶ Animation starten</button>
+      <div style="margin-top:10px; font-size:12px; color:var(--muted)">Falls nichts passiert: Prüfe Clip-Namen in <code>scene.json</code>.</div>
     </div>
   </div>
 
@@ -74,50 +73,38 @@
     import { GLTFLoader } from 'https://unpkg.com/three@0.160.0/examples/jsm/loaders/GLTFLoader.js';
 
     const qs = new URLSearchParams(location.search);
-    
-    // URL-Parameter: ?scene=ID&base=WORKER_ORIGIN
-    const sceneId = qs.get('scene');
-    const baseUrl = qs.get('base');
-    
-    // Scene JSON URL bestimmen
-    let sceneJsonUrl;
-    if (sceneId && baseUrl) {
-      // Worker-Modus: https://worker.dev/scenes/ID/scene.json
-      sceneJsonUrl = `${baseUrl}/scenes/${encodeURIComponent(sceneId)}/scene.json`;
-      console.log('📡 Worker-Modus:', sceneJsonUrl);
-    } else {
-      // Fallback: lokale scene.json
-      sceneJsonUrl = qs.get('src') || 'scene.json';
-      console.log('📁 Lokaler Modus:', sceneJsonUrl);
-    }
+    const sceneJsonUrl = qs.get('scene') || 'scene.json';
 
     const elApp = document.getElementById('app');
     const elTap = document.getElementById('tapgate');
+    const elStart = document.getElementById('startBtn');
     const elToast = document.getElementById('toast');
 
     const showToast = (msg) => {
       elToast.textContent = msg;
       elToast.classList.add('show');
       clearTimeout(showToast._t);
-      showToast._t = setTimeout(()=>elToast.classList.remove('show'), 3500);
+      showToast._t = setTimeout(()=>elToast.classList.remove('show'), 3000);
     };
 
-    function resolveRelative(base, file) {
-      try { 
-        // Wenn file bereits absolute URL ist, direkt zurückgeben
-        if (/^https?:\/\//i.test(file)) return file;
-        return new URL(file, base).toString(); 
-      } catch { 
-        return file; 
-      }
+    function normalizeAnimation(a = {}) {
+      const out = { ...a };
+      out.enabled = a.enabled !== false;
+      out.loop = !!a.loop;
+      out.iterations = out.loop ? Math.max(1, Number(a.iterations) || 9999) : 1;
+      out.start = (a.start === 'onClick') ? 'onClick' : 'onStart';
+      if (typeof out.clip !== 'string') out.clip = null;
+      return out;
+    }
+
+    function resolveRelative(baseUrl, file) {
+      try { return new URL(file, baseUrl).toString(); } catch { return file; }
     }
 
     const renderer = new THREE.WebGLRenderer({ antialias:true, alpha:false });
     renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
     renderer.setSize(innerWidth, innerHeight);
     renderer.outputColorSpace = THREE.SRGBColorSpace;
-    renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.2;
     elApp.appendChild(renderer.domElement);
 
     const scene = new THREE.Scene();
@@ -129,112 +116,72 @@
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
 
-    const hemi = new THREE.HemisphereLight(0xffffff, 0x223344, 1.0);
-    const dir = new THREE.DirectionalLight(0xffffff, 1.5);
+    const hemi = new THREE.HemisphereLight(0xffffff, 0x223344, 0.8);
+    const dir = new THREE.DirectionalLight(0xffffff, 1.2);
     dir.position.set(3, 5, 3);
     scene.add(hemi, dir);
 
-    const ground = new THREE.Mesh(
-      new THREE.CircleGeometry(5, 64), 
-      new THREE.MeshBasicMaterial({ color: 0x0f162b })
-    );
+    const ground = new THREE.Mesh(new THREE.CircleGeometry(5, 64), new THREE.MeshBasicMaterial({ color: 0x0f162b }));
     ground.rotation.x = -Math.PI/2;
     scene.add(ground);
 
     let mixer = null;
     const actions = [];
 
-    function normalizeAnimationConfig(data) {
-      // KRITISCH: Editor sendet data.animation (Singular), nicht data.animations (Plural)
-      const raw = data.animation || data.animations || {};
-      
-      // Wenn es ein Array ist (alter Viewer-Stil), nimm das erste Element
-      const cfg = Array.isArray(raw) ? raw[0] : raw;
-      
-      return {
-        enabled: cfg.enabled !== false,
-        clipName: cfg.clipName || cfg.clip || '*',  // '*' = erster Clip
-        loop: cfg.loop !== false,
-        iterations: Math.max(1, Number(cfg.iterations) || 9999),
-        start: (cfg.start === 'onClick' || cfg.start === 'onPlace') ? 'onClick' : 'onStart'
-      };
-    }
-
-    function applyAnimation(gltf, animCfg) {
-      if (!gltf.animations || gltf.animations.length === 0) {
-        console.warn('⚠️ Keine Animationen im GLB gefunden');
-        showToast('Keine Animationen vorhanden');
+    function applyAnimation(glb, metaList) {
+      if (!glb.animations || glb.animations.length === 0) {
+        showToast('Keine Clips im GLB gefunden.');
+        console.warn('⚠️ Keine GLB-Animationen vorhanden.');
         return;
       }
+      mixer = new THREE.AnimationMixer(glb.scene);
 
-      console.log('🎬 GLB enthält', gltf.animations.length, 'Clips:', gltf.animations.map(c=>c.name));
-      
-      mixer = new THREE.AnimationMixer(gltf.scene);
+      const byName = new Map(glb.animations.map(c => [c.name, c]));
+      const explicit = metaList.map(normalizeAnimation).filter(m => m.enabled && m.clip);
+      const anyClick = (list) => list.some(m => m.start === 'onClick');
+      const anyAuto  = (list) => list.some(m => m.start === 'onStart');
 
-      let targetClip = null;
-      const clipName = animCfg.clipName;
-
-      if (clipName === '*' || clipName === null || clipName === '') {
-        // Wildcard: nimm den ersten Clip
-        targetClip = gltf.animations[0];
-        console.log('🎯 Wildcard "*" → erster Clip:', targetClip.name);
+      if (explicit.length) {
+        console.log('🎬 Explizite Clips aus scene.json:', explicit.map(m=>m.clip));
+        explicit.forEach(meta => {
+          const clip = byName.get(meta.clip);
+          if (!clip) { console.warn('❌ Clip nicht gefunden:', meta.clip); return; }
+          const act = mixer.clipAction(clip);
+          if (meta.loop) { act.setLoop(THREE.LoopRepeat, meta.iterations); act.clampWhenFinished = false; }
+          else { act.setLoop(THREE.LoopOnce, 0); act.clampWhenFinished = true; }
+          act.enabled = true; act.reset();
+          actions.push({ meta, action: act });
+        });
       } else {
-        // Suche nach exaktem Namen
-        targetClip = gltf.animations.find(c => c.name === clipName);
-        if (!targetClip) {
-          console.warn(`❌ Clip "${clipName}" nicht gefunden. Verfügbar:`, gltf.animations.map(c=>c.name));
-          console.log('🎯 Fallback → erster Clip:', gltf.animations[0].name);
-          targetClip = gltf.animations[0];
-        } else {
-          console.log('✅ Clip gefunden:', clipName);
-        }
+        // Fallback: ALLE Clips spielen
+        const base = normalizeAnimation(metaList[0] || { loop:true, iterations:9999, start:'onStart' });
+        console.log(`🎯 Keine spezifischen Clips → Fallback: ALLE ${glb.animations.length} Clips`, base);
+        glb.animations.forEach(clip => {
+          const meta = { ...base, clip: clip.name };
+          const act = mixer.clipAction(clip);
+          if (meta.loop) { act.setLoop(THREE.LoopRepeat, meta.iterations); act.clampWhenFinished = false; }
+          else { act.setLoop(THREE.LoopOnce, 0); act.clampWhenFinished = true; }
+          act.enabled = true; act.reset();
+          actions.push({ meta, action: act });
+        });
       }
 
-      if (!targetClip) {
-        console.error('❌ Kein Clip zum Abspielen verfügbar');
-        return;
-      }
+      const hasClick = anyClick(actions.map(a=>a.meta));
+      const hasAuto  = anyAuto(actions.map(a=>a.meta));
+      console.log(`✅ Actions vorbereitet: ${actions.length} | onStart=${hasAuto} | onClick=${hasClick}`);
 
-      const action = mixer.clipAction(targetClip);
-      
-      if (animCfg.loop) {
-        action.setLoop(THREE.LoopRepeat, animCfg.iterations);
-        action.clampWhenFinished = false;
-      } else {
-        action.setLoop(THREE.LoopOnce, 0);
-        action.clampWhenFinished = true;
-      }
+      if (hasAuto) actions.forEach(({meta, action}) => { if (meta.start === 'onStart') action.play(); });
+      if (hasClick) showTapGate(true);
 
-      action.reset();
-      actions.push({ config: animCfg, action });
-
-      console.log('✅ Animation konfiguriert:', {
-        clip: targetClip.name,
-        loop: animCfg.loop,
-        start: animCfg.start
-      });
-
-      if (animCfg.start === 'onStart') {
-        action.play();
-        showToast(`Animation läuft: ${targetClip.name}`);
-        console.log('▶️ Auto-Start');
-      } else {
-        showTapGate(true);
-        console.log('⏸️ Wartet auf Klick');
-      }
+      showToast(`${actions.length} Animation(en) bereit`);
     }
 
-    function showTapGate(show) { 
-      document.getElementById('tapgate').classList.toggle('show', !!show); 
-    }
-    
+    function showTapGate(show) { document.getElementById('tapgate').classList.toggle('show', !!show); }
     function startClickAnimations() {
-      actions.forEach(({action}) => action.play());
+      actions.forEach(({meta, action}) => { if (meta.start === 'onClick') action.play(); });
       showTapGate(false);
-      showToast('Animation gestartet');
-      console.log('▶️ Manueller Start durch Klick');
+      showToast('Animation gestartet.');
     }
-    
     document.getElementById('tapgate').addEventListener('click', startClickAnimations);
     document.getElementById('startBtn').addEventListener('click', startClickAnimations);
 
@@ -242,90 +189,43 @@
     loader.setCrossOrigin('anonymous');
 
     async function loadScene() {
-      console.log('📥 Lade scene.json:', sceneJsonUrl);
-      
-      const res = await fetch(sceneJsonUrl, { 
-        cache: 'no-cache',
-        headers: { 'Accept': 'application/json' }
-      });
-      
-      if (!res.ok) {
-        throw new Error(`scene.json nicht gefunden (HTTP ${res.status})`);
-      }
-      
+      const res = await fetch(sceneJsonUrl, { cache:'no-cache' });
+      if (!res.ok) throw new Error(`scene.json nicht gefunden (${res.status})`);
       const data = await res.json();
-      console.log('📄 scene.json geladen:', data);
+      console.log('📄 scene.json:', data);
 
-      // GLB URL bestimmen (mit Worker-Support)
-      let glbUrl;
-      if (sceneId && baseUrl) {
-        // Worker: https://worker.dev/scenes/ID/scene.glb
-        glbUrl = `${baseUrl}/scenes/${encodeURIComponent(sceneId)}/scene.glb`;
-      } else {
-        // Relativ zur scene.json
-        const glbPath = data.model?.url || data.model || data.src || data.glb || 'scene.glb';
-        glbUrl = resolveRelative(sceneJsonUrl, glbPath);
-      }
+      const glbPath = data.model || data.src || data.glb || 'scene.glb';
+      const glbUrl = resolveRelative(sceneJsonUrl, glbPath);
 
-      console.log('📦 Lade GLB:', glbUrl);
-      
-      const animCfg = normalizeAnimationConfig(data);
-      console.log('🎬 Animation-Config:', animCfg);
+      const animationsMeta = Array.isArray(data.animations) ? data.animations : [{ clip:null, loop:true, iterations:9999, enabled:true, start:'onStart' }];
+      console.log('🎬 Anim-Meta:', animationsMeta);
 
-      const gltf = await new Promise((resolve, reject) => {
-        loader.load(
-          glbUrl, 
-          resolve, 
-          (progress) => {
-            if (progress.lengthComputable) {
-              const pct = Math.round((progress.loaded / progress.total) * 100);
-              console.log(`📦 GLB: ${pct}%`);
-            }
-          },
-          reject
-        );
-      });
+      const gltf = await new Promise((resolve, reject) => loader.load(glbUrl, resolve, undefined, reject));
+      console.log('📦 GLB Clips:', gltf.animations.map(c=>c.name));
 
-      console.log('✅ GLB geladen, Animationen:', gltf.animations.length);
-
-      // Model-Transform anwenden
-      const modelCfg = data.model || {};
-      if (modelCfg.scale) {
-        gltf.scene.scale.setScalar(Number(modelCfg.scale) || 1);
-      }
-      if (modelCfg.rotateY) {
-        gltf.scene.rotation.y = (Number(modelCfg.rotateY) || 0) * Math.PI / 180;
+      if (data.modelTransform && typeof data.modelTransform === 'object') {
+        const t = data.modelTransform;
+        gltf.scene.position.set(t.x || 0, t.y || 0, t.z || 0);
+        gltf.scene.rotation.set((t.rx||0)*Math.PI/180, (t.ry||0)*Math.PI/180, (t.rz||0)*Math.PI/180);
+        if (t.s) gltf.scene.scale.setScalar(t.s);
       }
 
       scene.add(gltf.scene);
 
-      // Kamera zentrieren
       try {
         const box = new THREE.Box3().setFromObject(gltf.scene);
-        const size = new THREE.Vector3();
-        const center = new THREE.Vector3();
-        box.getSize(size);
-        box.getCenter(center);
-        
-        const maxDim = Math.max(size.x, size.y, size.z) || 1;
-        const dist = Math.max(2.5, maxDim * 1.8);
-        
-        camera.position.set(
-          center.x + dist * 0.7, 
-          center.y + dist * 0.5, 
-          center.z + dist * 0.7
-        );
+        const size = new THREE.Vector3(); box.getSize(size);
+        const center = new THREE.Vector3(); box.getCenter(center);
+        const maxDim = Math.max(size.x, size.y, size.z);
+        const dist = Math.max(2.2, maxDim * 1.6);
+        camera.position.set(center.x + dist, center.y + dist * 0.6, center.z + dist);
         camera.lookAt(center);
         controls.target.copy(center);
         controls.update();
-        
-        console.log('📷 Kamera zentriert auf:', center, 'Distanz:', dist);
-      } catch (e) {
-        console.warn('Kamera-Zentrierung fehlgeschlagen:', e);
-      }
+      } catch {}
 
-      applyAnimation(gltf, animCfg);
-      showToast('Szene geladen');
+      applyAnimation(gltf, animationsMeta);
+      showToast('Szene geladen.');
     }
 
     const clock = new THREE.Clock();
@@ -344,11 +244,7 @@
     });
 
     tick();
-    
-    loadScene().catch(err => { 
-      console.error('❌ Fehler beim Laden:', err); 
-      showToast(err.message || 'Fehler beim Laden'); 
-    });
+    loadScene().catch(err => { console.error(err); showToast(err.message || 'Fehler beim Laden.'); });
   </script>
 </body>
 </html>
