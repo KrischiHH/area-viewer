@@ -124,22 +124,36 @@
   const endsWithAny = (u, exts)=> exts.some(ext => u.toLowerCase().endsWith(ext));
 
   let SCENE_GLB  = '';
-  let SCENE_JSON = '';
+let SCENE_JSON = '';
 
-  if (overrideGlb) {
-    SCENE_GLB = overrideGlb;
-  } else if (scene) {
-    if (isDataOrBlob(scene)) {
-      SCENE_JSON = scene; // data: URL mit JSON
-    } else if (isHttp(scene)) {
-      if (endsWithAny(scene, ['.glb','.gltf'])) SCENE_GLB = scene;
-      else SCENE_JSON = scene;
+if (overrideGlb) {
+  // GLB explizit überschrieben (so wie dein Link es macht)
+  SCENE_GLB = overrideGlb;
+}
+
+if (scene) {
+  // JSON IMMER aus scene ableiten
+  if (isDataOrBlob(scene)) {
+    SCENE_JSON = scene;
+  } else if (isHttp(scene)) {
+    // Wenn es eine URL ist: 
+    // - wenn es .glb/.gltf ist, NUR benutzen, falls kein overrideGlb
+    // - sonst als scene.json interpretieren
+    if (endsWithAny(scene, ['.glb','.gltf'])) {
+      if (!SCENE_GLB) SCENE_GLB = scene;
     } else {
-      const id = scene.replace(/\/+$/,'');
-      SCENE_GLB  = `${workerBase}/scenes/${encodeURIComponent(id)}/scene.glb`;
-      SCENE_JSON = `${workerBase}/scenes/${encodeURIComponent(id)}/scene.json`;
+      SCENE_JSON = scene;
     }
+  } else {
+    // Szene-ID + Worker-Base → Pfade bauen
+    const id = scene.replace(/\/+$/,'');
+    if (!SCENE_GLB) {
+      SCENE_GLB = `${workerBase}/scenes/${encodeURIComponent(id)}/scene.glb`;
+    }
+    SCENE_JSON = `${workerBase}/scenes/${encodeURIComponent(id)}/scene.json`;
   }
+}
+
 
   // --- DOM-Refs & Error-Helper ----------------------------------------------
   const err = (m)=>{
