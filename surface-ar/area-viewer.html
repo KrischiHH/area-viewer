@@ -177,7 +177,7 @@
 
     if (sel === 'none') {
       chosen = null; mv.autoplay = false;
-    } else if (sel === '*' || sel == null) {
+    } else if (sel === '*' || sel === null) {
       chosen = names[0] || null; mv.autoplay = !!chosen;
     } else if (typeof sel === 'string') {
       if (/^\d+$/.test(sel)) {
@@ -207,7 +207,7 @@
     hud.classList.toggle('hidden', !anyHud);
 
     if (audio && cfg.audio.autoplay === 'auto'){
-      const kick = ()=>{ try{ audio.play(); }catch{} window.removeEventListener('pointerdown', kick); };
+      const kick = ()=>{ try{ audio.play(); }catch{} };
       window.addEventListener('pointerdown', kick, { once:true });
     }
 
