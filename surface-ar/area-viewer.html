@@ -123,29 +123,25 @@
   const isDataOrBlob = (u)=> u.startsWith('data:') || u.startsWith('blob:');
   const endsWithAny = (u, exts)=> exts.some(ext => u.toLowerCase().endsWith(ext));
 
-  let SCENE_GLB  = '';
+ let SCENE_GLB  = '';
 let SCENE_JSON = '';
 
+// 1) explizites glb= bevorzugen
 if (overrideGlb) {
-  // GLB explizit überschrieben (so wie dein Link es macht)
   SCENE_GLB = overrideGlb;
 }
 
+// 2) scene= IMMER für scene.json auswerten (auch wenn glb= gesetzt ist)
 if (scene) {
-  // JSON IMMER aus scene ableiten
   if (isDataOrBlob(scene)) {
     SCENE_JSON = scene;
   } else if (isHttp(scene)) {
-    // Wenn es eine URL ist: 
-    // - wenn es .glb/.gltf ist, NUR benutzen, falls kein overrideGlb
-    // - sonst als scene.json interpretieren
     if (endsWithAny(scene, ['.glb','.gltf'])) {
       if (!SCENE_GLB) SCENE_GLB = scene;
     } else {
       SCENE_JSON = scene;
     }
   } else {
-    // Szene-ID + Worker-Base → Pfade bauen
     const id = scene.replace(/\/+$/,'');
     if (!SCENE_GLB) {
       SCENE_GLB = `${workerBase}/scenes/${encodeURIComponent(id)}/scene.glb`;
