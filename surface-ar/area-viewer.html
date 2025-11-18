@@ -312,12 +312,24 @@
       const startMode = startModeRaw.toLowerCase();
       console.log('[area-viewer] chosen:', chosen, 'startMode:', startMode);
 
-      // Gesten-Zustand für onPlace
-      let arInSession = false;
-      let objectPlaced = false;
-      let lastPlaceTime = 0;
+      // AR-Status-Tracking für Hint (ohne Click-Hacks)
+      mv.addEventListener('ar-status',(ev)=>{
+        const st = ev.detail && ev.detail.status;
+        console.log('[area-viewer] ar-status:', st);
 
-      // Startverhalten
+        if (st === 'session-started') {
+          // AR gestartet → Hinweis einblenden, wie man startet
+          if (startMode === 'onplace') {
+            showHint('Platziere das Modell und tippe anschließend auf ▶, um die Animation zu starten.');
+          }
+        } else if (st === 'not-presenting') {
+          hideHint();
+          try { mv.pause(); } catch {}
+          try { mv.currentTime = 0; } catch {}
+        }
+      });
+
+      // Startverhalten je nach Modus
       if (startMode === 'manual') {
         mv.animationName = chosen;
         mv.autoplay = false;
@@ -328,49 +340,11 @@
         try { mv.pause(); } catch {}
         mv.addEventListener('click', ()=> togglePlay(mv));
       } else if (startMode === 'onplace') {
-        // Preview: Animation vorhanden, aber pausiert → Play-Button funktioniert
+        // Preview & AR: Animation nur manuell über ▶ steuerbar
         mv.animationName = chosen;
         mv.autoplay = false;
         try { mv.pause(); } catch {}
         try { mv.currentTime = 0; } catch {}
-
-        mv.addEventListener('ar-status',(ev)=>{
-          const st = ev.detail && ev.detail.status;
-          console.log('[area-viewer] ar-status:', st);
-
-          if (st === 'session-started') {
-            arInSession = true;
-            objectPlaced = false;
-            lastPlaceTime = performance.now();
-            hideHint();
-            // Sicherheit: in AR erstmal gestoppt / auf Anfang
-            try { mv.pause(); } catch {}
-            try { mv.currentTime = 0; } catch {}
-          } else if (st === 'object-placed') {
-            arInSession = true;
-            objectPlaced = true;
-            lastPlaceTime = performance.now();
-            // Hinweis einblenden
-            showHint('Tippe auf die Szene, um die Animation zu starten/zu stoppen.');
-          } else if (st === 'not-presenting') {
-            arInSession = false;
-            objectPlaced = false;
-            lastPlaceTime = 0;
-            hideHint();
-            try { mv.pause(); } catch {}
-            try { mv.currentTime = 0; } catch {}
-          }
-        });
-
-        mv.addEventListener('click', ()=>{
-          if (!arInSession || !objectPlaced) return;
-          const now = performance.now();
-          // Den Platzierungs-Tap ignorieren (debounce ~350ms)
-          if (now - lastPlaceTime < 350) return;
-
-          hideHint();
-          togglePlay(mv);
-        });
       } else {
         // onStart / default
         mv.animationName = chosen;
@@ -394,6 +368,7 @@
           try{ audio.play(); }catch{}
         }
         btnPlay.textContent = '⏸';
+        hideHint();
       });
       mv.addEventListener('pause', ()=>{
         if (audio && cfg.audio.autoplay === 'withAnimation' && !audio.paused){
