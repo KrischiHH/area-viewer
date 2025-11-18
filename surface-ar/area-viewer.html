@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
   <title>ARea Viewer – Surface AR</title>
 
-  <!-- model-viewer (von Google) -->
+  <!-- model-viewer von Google -->
   <script type="module" src="https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js"></script>
 
   <style>
@@ -121,20 +121,27 @@
     const isDataOrBlob = (u)=> u.startsWith('data:') || u.startsWith('blob:');
     const endsWithAny = (u,exts)=> exts.some(ext=> u.toLowerCase().endsWith(ext));
 
-    let SCENE_GLB = '';
+    let SCENE_GLB  = '';
     let SCENE_JSON = '';
 
+    // GLB/JSON-Auflösung
     if (overrideGlb) {
       SCENE_GLB = overrideGlb;
-    } else if (scene) {
+    }
+    if (scene) {
       if (isDataOrBlob(scene)) {
         SCENE_JSON = scene;
       } else if (isHttp(scene)) {
-        if (endsWithAny(scene, ['.glb','.gltf'])) SCENE_GLB = scene;
-        else SCENE_JSON = scene;
+        if (endsWithAny(scene, ['.glb','.gltf'])) {
+          if (!SCENE_GLB) SCENE_GLB = scene;
+        } else {
+          SCENE_JSON = scene;
+        }
       } else {
         const id = scene.replace(/\/+$/,'');
-        SCENE_GLB  = `${workerBase}/scenes/${encodeURIComponent(id)}/scene.glb`;
+        if (!SCENE_GLB) {
+          SCENE_GLB = `${workerBase}/scenes/${encodeURIComponent(id)}/scene.glb`;
+        }
         SCENE_JSON = `${workerBase}/scenes/${encodeURIComponent(id)}/scene.json`;
       }
     }
@@ -146,23 +153,23 @@
       console.error('[area-viewer]', m);
     };
 
-    const mv     = document.getElementById('mv');
-    const hud    = document.getElementById('hud');
-    const btnPlay= document.getElementById('btnPlay');
-    const btnMute= document.getElementById('btnMute');
-    const arBtn  = document.getElementById('arBtn');
+    const mv      = document.getElementById('mv');
+    const hud     = document.getElementById('hud');
+    const btnPlay = document.getElementById('btnPlay');
+    const btnMute = document.getElementById('btnMute');
+    const arBtn   = document.getElementById('arBtn');
 
-    // Default-Konfiguration, wird von scene.json überschrieben
+    // Default-Konfig
     const cfg = {
       model:{ url: SCENE_GLB || "https://modelviewer.dev/shared-assets/models/Astronaut.glb", usdzUrl:null, animation:"*" },
       target:{ previewUrl:null },
       audio:{ src:null, autoplay:"withAnimation", loop:true, volume:0.85 },
       ui:{ showPlayPause:false, showMute:false, showAR:true, arLabel:"In AR öffnen" },
-      animation:{ start:"onStart" } // Optionen: onStart, onPlace, onClick, manual
+      animation:{ start:"onStart" } // onStart | onPlace | onClick | manual
     };
 
     let uiExplicitPlayPause = false;
-    let uiExplicitMute = false;
+    let uiExplicitMute      = false;
 
     let audio = null;
     let audioReady = false;
@@ -181,6 +188,11 @@
       muted = !!on;
       if (audio && audioReady) audio.muted = muted;
       btnMute.textContent = muted ? '🔈' : '🔊';
+    }
+
+    function togglePlay(mvEl){
+      if (!mvEl.animationName) return;
+      if (mvEl.paused) mvEl.play(); else mvEl.pause();
     }
 
     // Szene + JSON laden
@@ -226,7 +238,7 @@
 
         if (!cfg.ui.showAR) {
           mv.removeAttribute('ar');
-          arBtn.style.display = 'none';
+          arBtn.style.display='none';
         } else {
           arBtn.textContent = cfg.ui.arLabel || 'In AR öffnen';
         }
@@ -236,60 +248,13 @@
         const showMuteInitial = uiExplicitMute ? cfg.ui.showMute : !!cfg.audio?.src;
         btnMute.style.display = showMuteInitial ? '' : 'none';
 
-      } catch (e) {
+      } catch(e){
         err('scene.json konnte nicht geladen werden: ' + e.message);
         console.error(e);
       }
     })();
 
-    function togglePlay(mv){
-      if (!mv.animationName) return;
-      if (mv.paused) mv.play(); else mv.pause();
-    }
-
-    // Flags für OnPlace
-    let inAR = false;
-    let firstARTapDone = false;
-
-    function setupOnPlaceBehavior(startMode){
-      if (startMode !== 'onplace') return;
-
-      mv.addEventListener('ar-status',(ev)=>{
-        const st = ev.detail && ev.detail.status;
-        console.log('[area-viewer] ar-status:', st);
-        if (st === 'session-started') {
-          inAR = true;
-          firstARTapDone = false;
-          // In AR zunächst pausieren, auch wenn Preview animiert war
-          if (!mv.paused) {
-            try { mv.pause(); } catch {}
-          }
-        } else if (st === 'not-presenting') {
-          inAR = false;
-          firstARTapDone = false;
-          // Beim Verlassen von AR pausieren
-          if (!mv.paused) {
-            try { mv.pause(); } catch {}
-          }
-        }
-      });
-
-      mv.addEventListener('click', ()=>{
-        if (!inAR) return;
-        if (!mv.animationName) return;
-
-        if (!firstARTapDone) {
-          // Erster Tap nach AR-Start = Platzierung → Animation starten
-          firstARTapDone = true;
-          try { mv.play(); } catch {}
-        } else {
-          // Weitere Taps in AR toggeln Play/Pause
-          togglePlay(mv);
-        }
-      });
-    }
-
-    // Wenn das Modell samt Animation geladen ist
+    // Wenn Modell & Animationen geladen sind
     mv.addEventListener('load', ()=>{
       // Kamera-Basis
       mv.cameraOrbit  = '0deg 70deg auto';
@@ -338,10 +303,26 @@
         try { mv.pause(); } catch {}
         mv.addEventListener('click', ()=> togglePlay(mv));
       } else if (startMode === 'onplace') {
-        // Preview darf weiter autoplay haben – OnPlace greift nur in AR
-        setupOnPlaceBehavior(startMode);
+        // Preview: keine Animation
+        mv.autoplay = false;
+        try { mv.pause(); } catch {}
+
+        // In AR: beim Start der Session Animation starten, beim Verlassen pausieren
+        mv.addEventListener('ar-status',(ev)=>{
+          const st = ev.detail && ev.detail.status;
+          console.log('[area-viewer] ar-status:', st);
+          if (st === 'session-started') {
+            if (mv.animationName) {
+              try { mv.play(); } catch {}
+            }
+          } else if (st === 'not-presenting') {
+            if (!mv.paused) {
+              try { mv.pause(); } catch {}
+            }
+          }
+        });
       }
-      // onStart (oder unbekannt) → Standard: autoplay in Preview + AR
+      // onStart → Standard: mv.autoplay so wie oben bestimmt
 
       // HUD Sichtbarkeit
       const showPlay = uiExplicitPlayPause ? cfg.ui.showPlayPause : (names.length > 0);
