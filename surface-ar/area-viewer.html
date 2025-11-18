@@ -5,7 +5,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
   <title>ARea Viewer – Surface AR</title>
 
-  <!-- model-viewer von Google -->
   <script type="module" src="https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js"></script>
 
   <style>
@@ -159,13 +158,12 @@
     const btnMute = document.getElementById('btnMute');
     const arBtn   = document.getElementById('arBtn');
 
-    // Default-Konfig
     const cfg = {
       model:{ url: SCENE_GLB || "https://modelviewer.dev/shared-assets/models/Astronaut.glb", usdzUrl:null, animation:"*" },
       target:{ previewUrl:null },
       audio:{ src:null, autoplay:"withAnimation", loop:true, volume:0.85 },
       ui:{ showPlayPause:false, showMute:false, showAR:true, arLabel:"In AR öffnen" },
-      animation:{ start:"onStart" } // onStart | onPlace | onClick | manual
+      animation:{ start:"onStart" }
     };
 
     let uiExplicitPlayPause = false;
@@ -254,9 +252,8 @@
       }
     })();
 
-    // Wenn Modell & Animationen geladen sind
     mv.addEventListener('load', ()=>{
-      // Kamera-Basis
+      // Kamera einstellen
       mv.cameraOrbit  = '0deg 70deg auto';
       mv.cameraTarget = 'auto';
       mv.fieldOfView  = '30deg';
@@ -265,15 +262,14 @@
       const names = mv.availableAnimations || [];
       console.log('[area-viewer] availableAnimations:', names);
 
+      // Gewünschten Clip bestimmen
       const sel = cfg.model.animation;
       let chosen = null;
 
       if (sel === 'none') {
         chosen = null;
-        mv.autoplay = false;
       } else if (sel === '*' || sel === null || typeof sel === 'undefined') {
         chosen = names[0] || null;
-        mv.autoplay = !!chosen;
       } else if (typeof sel === 'string') {
         if (/^\d+$/.test(sel)) {
           const idx = Math.max(0, Math.min(names.length-1, parseInt(sel,10)));
@@ -281,48 +277,52 @@
         } else {
           chosen = names.includes(sel) ? sel : (names[0] || null);
         }
-        mv.autoplay = !!chosen;
       } else if (Number.isFinite(sel)) {
         const idx = Math.max(0, Math.min(names.length-1, sel|0));
         chosen = names[idx] || null;
-        mv.autoplay = !!chosen;
       }
-
-      mv.animationName = chosen;
 
       const startModeRaw = (cfg.animation && cfg.animation.start) ? String(cfg.animation.start) : 'onStart';
       const startMode = startModeRaw.toLowerCase();
       console.log('[area-viewer] chosen:', chosen, 'startMode:', startMode);
 
-      // Startmodi
+      // Startverhalten je nach Modus
       if (startMode === 'manual') {
+        mv.animationName = chosen;
         mv.autoplay = false;
         try { mv.pause(); } catch {}
       } else if (startMode === 'onclick') {
+        mv.animationName = chosen;
         mv.autoplay = false;
         try { mv.pause(); } catch {}
         mv.addEventListener('click', ()=> togglePlay(mv));
       } else if (startMode === 'onplace') {
-        // Preview: keine Animation
+        // WICHTIG: Preview bleibt still → keine Animation im 3D-View
+        mv.animationName = null;
         mv.autoplay = false;
         try { mv.pause(); } catch {}
 
-        // In AR: beim Start der Session Animation starten, beim Verlassen pausieren
+        // In AR → beim Start der Session Clip setzen + starten, beim Verlassen pausieren
         mv.addEventListener('ar-status',(ev)=>{
           const st = ev.detail && ev.detail.status;
           console.log('[area-viewer] ar-status:', st);
           if (st === 'session-started') {
-            if (mv.animationName) {
+            if (chosen) {
+              mv.animationName = chosen;
               try { mv.play(); } catch {}
             }
           } else if (st === 'not-presenting') {
-            if (!mv.paused) {
-              try { mv.pause(); } catch {}
-            }
+            try { mv.pause(); } catch {}
+            // optional zurücksetzen, damit nächste Session von vorn beginnt
+            try { mv.currentTime = 0; } catch {}
+            mv.animationName = null;
           }
         });
+      } else {
+        // onStart (oder unbekannt) → ganz normal autoplay
+        mv.animationName = chosen;
+        mv.autoplay = !!chosen;
       }
-      // onStart → Standard: mv.autoplay so wie oben bestimmt
 
       // HUD Sichtbarkeit
       const showPlay = uiExplicitPlayPause ? cfg.ui.showPlayPause : (names.length > 0);
@@ -350,7 +350,6 @@
       });
     });
 
-    // HUD Buttons
     btnPlay.addEventListener('click', ()=> togglePlay(mv));
     btnMute.addEventListener('click', ()=> setMuted(!muted));
 
