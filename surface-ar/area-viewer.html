@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
   <title>ARea Viewer – Surface AR</title>
 
+  <!-- model-viewer von Google -->
   <script type="module" src="https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js"></script>
 
   <style>
@@ -158,12 +159,13 @@
     const btnMute = document.getElementById('btnMute');
     const arBtn   = document.getElementById('arBtn');
 
+    // Default-Konfig
     const cfg = {
       model:{ url: SCENE_GLB || "https://modelviewer.dev/shared-assets/models/Astronaut.glb", usdzUrl:null, animation:"*" },
       target:{ previewUrl:null },
       audio:{ src:null, autoplay:"withAnimation", loop:true, volume:0.85 },
       ui:{ showPlayPause:false, showMute:false, showAR:true, arLabel:"In AR öffnen" },
-      animation:{ start:"onStart" }
+      animation:{ start:"onStart" } // onStart | onPlace | onClick | manual
     };
 
     let uiExplicitPlayPause = false;
@@ -253,7 +255,7 @@
     })();
 
     mv.addEventListener('load', ()=>{
-      // Kamera einstellen
+      // Kamera-Basis
       mv.cameraOrbit  = '0deg 70deg auto';
       mv.cameraTarget = 'auto';
       mv.fieldOfView  = '30deg';
@@ -262,7 +264,7 @@
       const names = mv.availableAnimations || [];
       console.log('[area-viewer] availableAnimations:', names);
 
-      // Gewünschten Clip bestimmen
+      // Clip-Auswahl
       const sel = cfg.model.animation;
       let chosen = null;
 
@@ -297,29 +299,41 @@
         try { mv.pause(); } catch {}
         mv.addEventListener('click', ()=> togglePlay(mv));
       } else if (startMode === 'onplace') {
-        // WICHTIG: Preview bleibt still → keine Animation im 3D-View
-        mv.animationName = null;
+        // Preview: Animation vorhanden, aber pausiert → Play-Button funktioniert
+        mv.animationName = chosen;
         mv.autoplay = false;
         try { mv.pause(); } catch {}
 
-        // In AR → beim Start der Session Clip setzen + starten, beim Verlassen pausieren
+        let inAR = false;
+        let startedFromPlacement = false;
+
         mv.addEventListener('ar-status',(ev)=>{
           const st = ev.detail && ev.detail.status;
           console.log('[area-viewer] ar-status:', st);
           if (st === 'session-started') {
-            if (chosen) {
-              mv.animationName = chosen;
-              try { mv.play(); } catch {}
-            }
+            inAR = true;
+            startedFromPlacement = false;
           } else if (st === 'not-presenting') {
+            inAR = false;
+            startedFromPlacement = false;
             try { mv.pause(); } catch {}
-            // optional zurücksetzen, damit nächste Session von vorn beginnt
             try { mv.currentTime = 0; } catch {}
-            mv.animationName = null;
+          }
+        });
+
+        // Erster Tap in AR: Platzierung + Start; weitere Taps: Toggle
+        mv.addEventListener('click', ()=>{
+          if (!inAR) return;
+          if (!chosen) return;
+          if (!startedFromPlacement) {
+            startedFromPlacement = true;
+            try { mv.play(); } catch {}
+          } else {
+            togglePlay(mv);
           }
         });
       } else {
-        // onStart (oder unbekannt) → ganz normal autoplay
+        // onStart / default
         mv.animationName = chosen;
         mv.autoplay = !!chosen;
       }
@@ -330,7 +344,7 @@
       const anyHud = (btnPlay.style.display !== 'none') || (btnMute.style.display !== 'none');
       hud.classList.toggle('hidden', !anyHud);
 
-      // Audio mit Animation koppeln
+      // Audio koppeln
       if (audio && cfg.audio.autoplay === 'auto'){
         const kick = ()=>{ try{ audio.play(); }catch{} };
         window.addEventListener('pointerdown', kick, { once:true });
@@ -350,6 +364,7 @@
       });
     });
 
+    // HUD-Buttons
     btnPlay.addEventListener('click', ()=> togglePlay(mv));
     btnMute.addEventListener('click', ()=> setMuted(!muted));
 
