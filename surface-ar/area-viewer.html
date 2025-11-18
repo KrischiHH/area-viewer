@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
   <title>ARea Viewer – Surface AR</title>
 
-  <!-- model-viewer (aktuelle Version von unpkg, z.B. 4.x) -->
+  <!-- model-viewer -->
   <script type="module" src="https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js"></script>
 
   <style>
@@ -74,6 +74,23 @@
       max-width:min(92vw,680px);
       white-space:pre-wrap;
     }
+    #hint{
+      position:fixed;
+      left:50%;
+      bottom:max(72px, env(safe-area-inset-bottom) + 64px);
+      transform:translateX(-50%);
+      background:rgba(0,0,0,0.65);
+      color:#fff;
+      padding:6px 12px;
+      border-radius:999px;
+      font-size:12px;
+      backdrop-filter:blur(6px);
+      border:1px solid rgba(255,255,255,0.25);
+      display:none;
+      z-index:4;
+      text-align:center;
+      max-width:min(92vw,420px);
+    }
   </style>
 </head>
 <body>
@@ -100,6 +117,8 @@
     <button id="btnMute" title="Ton an/aus">🔊</button>
   </div>
 
+  <div id="hint"></div>
+
   <script type="module">
   (() => {
     const qs = new URLSearchParams(location.search);
@@ -124,7 +143,6 @@
     let SCENE_GLB  = '';
     let SCENE_JSON = '';
 
-    // GLB/JSON-Auflösung
     if (overrideGlb) {
       SCENE_GLB = overrideGlb;
     }
@@ -158,8 +176,8 @@
     const btnPlay = document.getElementById('btnPlay');
     const btnMute = document.getElementById('btnMute');
     const arBtn   = document.getElementById('arBtn');
+    const hint    = document.getElementById('hint');
 
-    // Default-Konfig
     const cfg = {
       model:{ url: SCENE_GLB || "https://modelviewer.dev/shared-assets/models/Astronaut.glb", usdzUrl:null, animation:"*" },
       target:{ previewUrl:null },
@@ -193,6 +211,14 @@
     function togglePlay(mvEl){
       if (!mvEl.animationName) return;
       if (mvEl.paused) mvEl.play(); else mvEl.pause();
+    }
+
+    function showHint(msg){
+      hint.textContent = msg;
+      hint.style.display = 'block';
+    }
+    function hideHint(){
+      hint.style.display = 'none';
     }
 
     // Szene + JSON laden
@@ -255,7 +281,6 @@
     })();
 
     mv.addEventListener('load', ()=>{
-      // Kamera-Basis
       mv.cameraOrbit  = '0deg 70deg auto';
       mv.cameraTarget = 'auto';
       mv.fieldOfView  = '30deg';
@@ -264,7 +289,6 @@
       const names = mv.availableAnimations || [];
       console.log('[area-viewer] availableAnimations:', names);
 
-      // Clip-Auswahl
       const sel = cfg.model.animation;
       let chosen = null;
 
@@ -288,7 +312,12 @@
       const startMode = startModeRaw.toLowerCase();
       console.log('[area-viewer] chosen:', chosen, 'startMode:', startMode);
 
-      // Startverhalten je nach Modus
+      // Gesten-Zustand für onPlace
+      let arInSession = false;
+      let objectPlaced = false;
+      let lastPlaceTime = 0;
+
+      // Startverhalten
       if (startMode === 'manual') {
         mv.animationName = chosen;
         mv.autoplay = false;
@@ -303,25 +332,44 @@
         mv.animationName = chosen;
         mv.autoplay = false;
         try { mv.pause(); } catch {}
+        try { mv.currentTime = 0; } catch {}
 
         mv.addEventListener('ar-status',(ev)=>{
           const st = ev.detail && ev.detail.status;
           console.log('[area-viewer] ar-status:', st);
 
           if (st === 'session-started') {
-            // AR gestartet, aber noch nicht platziert → sicher pausiert & zurück auf 0
+            arInSession = true;
+            objectPlaced = false;
+            lastPlaceTime = performance.now();
+            hideHint();
+            // Sicherheit: in AR erstmal gestoppt / auf Anfang
             try { mv.pause(); } catch {}
             try { mv.currentTime = 0; } catch {}
           } else if (st === 'object-placed') {
-            // Jetzt wurde das Objekt gesetzt → Animation starten
-            if (mv.animationName) {
-              try { mv.play(); } catch {}
-            }
+            arInSession = true;
+            objectPlaced = true;
+            lastPlaceTime = performance.now();
+            // Hinweis einblenden
+            showHint('Tippe auf die Szene, um die Animation zu starten/zu stoppen.');
           } else if (st === 'not-presenting') {
-            // AR beendet → stop & reset
+            arInSession = false;
+            objectPlaced = false;
+            lastPlaceTime = 0;
+            hideHint();
             try { mv.pause(); } catch {}
             try { mv.currentTime = 0; } catch {}
           }
+        });
+
+        mv.addEventListener('click', ()=>{
+          if (!arInSession || !objectPlaced) return;
+          const now = performance.now();
+          // Den Platzierungs-Tap ignorieren (debounce ~350ms)
+          if (now - lastPlaceTime < 350) return;
+
+          hideHint();
+          togglePlay(mv);
         });
       } else {
         // onStart / default
