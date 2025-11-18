@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
   <title>ARea Viewer – Surface AR</title>
 
-  <!-- model-viewer von Google -->
+  <!-- model-viewer (aktuelle Version von unpkg, z.B. 4.x) -->
   <script type="module" src="https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js"></script>
 
   <style>
@@ -304,32 +304,23 @@
         mv.autoplay = false;
         try { mv.pause(); } catch {}
 
-        let inAR = false;
-        let startedFromPlacement = false;
-
         mv.addEventListener('ar-status',(ev)=>{
           const st = ev.detail && ev.detail.status;
           console.log('[area-viewer] ar-status:', st);
+
           if (st === 'session-started') {
-            inAR = true;
-            startedFromPlacement = false;
-          } else if (st === 'not-presenting') {
-            inAR = false;
-            startedFromPlacement = false;
+            // AR gestartet, aber noch nicht platziert → sicher pausiert & zurück auf 0
             try { mv.pause(); } catch {}
             try { mv.currentTime = 0; } catch {}
-          }
-        });
-
-        // Erster Tap in AR: Platzierung + Start; weitere Taps: Toggle
-        mv.addEventListener('click', ()=>{
-          if (!inAR) return;
-          if (!chosen) return;
-          if (!startedFromPlacement) {
-            startedFromPlacement = true;
-            try { mv.play(); } catch {}
-          } else {
-            togglePlay(mv);
+          } else if (st === 'object-placed') {
+            // Jetzt wurde das Objekt gesetzt → Animation starten
+            if (mv.animationName) {
+              try { mv.play(); } catch {}
+            }
+          } else if (st === 'not-presenting') {
+            // AR beendet → stop & reset
+            try { mv.pause(); } catch {}
+            try { mv.currentTime = 0; } catch {}
           }
         });
       } else {
