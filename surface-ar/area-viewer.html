@@ -279,16 +279,17 @@
       // Wichtig: nur der Startzustand zählt, da wir kein Preview brauchen.
       // - onStart  → animiert
       // - manual/onPlace/onClick → pausiert, Frame 0
-      if (startMode === 'manual' || startMode === 'onplace' || startMode === 'onclick') {
-        mv.autoplay = false;
-        try { mv.pause(); } catch {}
-        try { mv.currentTime = 0; } catch {}
-      } else {
-        mv.autoplay = !!chosen;
-        if (mv.autoplay && typeof mv.play === 'function') {
-          try { mv.play(); } catch {}
-        }
-      }
+      if (startMode === 'manual' || startMode === 'onclick') {
+  mv.autoplay = false;
+  try { mv.pause(); } catch {}
+  try { mv.currentTime = 0; } catch {}
+} else {
+  // onstart + onplace (und alles andere) → Animation läuft
+  mv.autoplay = !!chosen;
+  if (mv.autoplay && typeof mv.play === 'function') {
+    try { mv.play(); } catch {}
+  }
+}
     });
 
     // --------- AR-Start über den Poster-Button ---------
