@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
   <title>ARea Viewer – Surface AR</title>
 
-  <!-- model-viewer von Google -->
+  <!-- model-viewer -->
   <script type="module" src="https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js"></script>
 
   <style>
@@ -179,6 +179,8 @@
     let audio = null;
     let audioReady = false;
     let muted = false;
+    let isPlaying = false;
+    let currentStartMode = 'onstart'; // wird im load-Handler gesetzt
 
     function setupAudio(){
       if (!cfg.audio?.src) return;
@@ -196,10 +198,9 @@
     }
 
     function togglePlay(){
-      // Nur sinnvoll, wenn eine Animation gesetzt ist
       if (!mv.animationName) return;
       try {
-        if (mv.paused) {
+        if (!isPlaying) {
           mv.play();
         } else {
           mv.pause();
@@ -209,24 +210,36 @@
       }
     }
 
-    let currentStartMode = 'onstart'; // wird im load-Handler gesetzt
+    // AR-Button: Animationszustand *vor* AR-Start fixen + AR aktivieren
+    arBtn?.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      ev.preventDefault();
 
-    // AR-Button: Animationszustand *vor* AR-Start fixen
-    arBtn?.addEventListener('click', () => {
       const mode = currentStartMode;
       try {
         if (mode === 'onplace' || mode === 'manual' || mode === 'onclick') {
           mv.autoplay = false;
           if (typeof mv.pause === 'function') mv.pause();
           if (typeof mv.currentTime === 'number') mv.currentTime = 0;
+          isPlaying = false;
         } else if (mode === 'onstart') {
           if (mv.animationName) {
             mv.autoplay = true;
-            if (typeof mv.play === 'function') mv.play();
+            if (typeof mv.play === 'function') {
+              mv.play();
+              isPlaying = true;
+            }
           }
         }
       } catch(e){
         console.warn('[area-viewer] Konnte Animation vor AR-Start nicht setzen:', e);
+      }
+
+      // AR-Modus wirklich starten
+      if (typeof mv.activateAR === 'function') {
+        mv.activateAR();
+      } else if (typeof mv.enterAR === 'function') {
+        mv.enterAR();
       }
     });
 
@@ -262,13 +275,11 @@
             Object.assign(cfg.animation, j.animation);
           }
 
-          // Falls SCENE_GLB leer war, aber in JSON eine URL steht:
           if (!SCENE_GLB && cfg.model.url) {
             mv.src = bust(cfg.model.url);
           }
         }
 
-        // model-viewer-Attribute final setzen
         const finalGlb = cfg.model.url || SCENE_GLB || "https://modelviewer.dev/shared-assets/models/Astronaut.glb";
         mv.src = bust(finalGlb);
 
@@ -282,11 +293,9 @@
         if (!cfg.ui.showAR) {
           mv.removeAttribute('ar');
           if (arBtn) arBtn.style.display = 'none';
-        } else {
-          if (arBtn) {
-            arBtn.textContent = cfg.ui.arLabel || 'In AR öffnen';
-            arBtn.style.display = '';
-          }
+        } else if (arBtn) {
+          arBtn.textContent = cfg.ui.arLabel || 'In AR öffnen';
+          arBtn.style.display = '';
         }
 
         if (cfg.audio?.src) setupAudio();
@@ -302,7 +311,6 @@
 
     // --------- Wenn Modell geladen ist: Animation & HUD konfigurieren ---------
     mv.addEventListener('load', () => {
-      // Kamera-Basis
       mv.cameraOrbit  = '0deg 70deg auto';
       mv.cameraTarget = 'auto';
       mv.fieldOfView  = '30deg';
@@ -343,16 +351,17 @@
         mv.animationName = chosen;
       }
 
-      // Startverhalten:
-      // - onStart: Preview & AR starten animiert
-      // - manual / onPlace / onClick: Preview & AR starten pausiert, nur via Button
+      // Startverhalten im Preview:
+      // - onStart: startet animiert
+      // - manual / onPlace / onClick: startet pausiert
       if (startMode === 'manual' || startMode === 'onplace' || startMode === 'onclick') {
         mv.autoplay = false;
         try { mv.pause(); } catch {}
+        isPlaying = false;
       } else {
         mv.autoplay = !!chosen;
         if (mv.autoplay && typeof mv.play === 'function') {
-          try { mv.play(); } catch {}
+          try { mv.play(); isPlaying = true; } catch {}
         }
       }
 
@@ -372,6 +381,7 @@
         if (audio && cfg.audio.autoplay === 'withAnimation' && !audio.muted){
           try{ audio.play(); }catch{}
         }
+        isPlaying = true;
         btnPlay.textContent = '⏸';
       });
 
@@ -379,6 +389,7 @@
         if (audio && cfg.audio.autoplay === 'withAnimation' && !audio.paused){
           try{ audio.pause(); }catch{}
         }
+        isPlaying = false;
         btnPlay.textContent = '▶︎';
       });
     });
