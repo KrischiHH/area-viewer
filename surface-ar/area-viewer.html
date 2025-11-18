@@ -3,9 +3,9 @@
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-  <title>ARea Viewer – Surface AR (Native Baseline)</title>
+  <title>ARea Viewer – Surface AR</title>
 
-  <!-- model-viewer (Native Baseline) -->
+  <!-- model-viewer (von Google) -->
   <script type="module" src="https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js"></script>
 
   <style>
@@ -15,7 +15,7 @@
       margin:0;
       height:100%;
       background:#000;
-      font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial
+      font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif
     }
     model-viewer{
       position:fixed;
@@ -23,7 +23,7 @@
       width:100vw;
       height:100svh;
       display:block;
-      background:#000
+      background:#000;
     }
     button[slot="ar-button"]{
       position:absolute;
@@ -35,7 +35,7 @@
       background:#111;
       color:#fff;
       font-size:14px;
-      cursor:pointer
+      cursor:pointer;
     }
     #hud{
       position:fixed;
@@ -48,7 +48,7 @@
       border:1px solid rgba(255,255,255,.15);
       padding:6px;
       border-radius:999px;
-      backdrop-filter:blur(6px)
+      backdrop-filter:blur(6px);
     }
     #hud.hidden{display:none}
     #hud button{
@@ -58,7 +58,7 @@
       border-radius:10px;
       color:#fff;
       user-select:none;
-      font-size:14px
+      font-size:14px;
     }
     #err{
       position:fixed;
@@ -72,7 +72,7 @@
       display:none;
       font:12px/1.35 monospace;
       max-width:min(92vw,680px);
-      white-space:pre-wrap
+      white-space:pre-wrap;
     }
   </style>
 </head>
@@ -82,9 +82,8 @@
   <model-viewer id="mv"
     src="https://modelviewer.dev/shared-assets/models/Astronaut.glb"
     ar
-    ar-modes="scene-viewer quick-look webxr"
+    ar-modes="webxr scene-viewer quick-look"
     camera-controls
-    autoplay
     environment-image="https://modelviewer.dev/shared-assets/environments/neutral.hdr"
     exposure="1"
     shadow-intensity="1"
@@ -97,284 +96,284 @@
   </model-viewer>
 
   <div id="hud" class="hidden">
-    <button id="btnPlay" title="Play/Pause">▶︎/⏸</button>
+    <button id="btnPlay" title="Play/Pause">▶︎</button>
     <button id="btnMute" title="Ton an/aus">🔊</button>
   </div>
 
-<script>
-  // --- Query-Params & Cache-Busting (dev) -----------------------------------
-  const qs = new URLSearchParams(location.search);
-  const devParam = qs.get('dev');
-  const DEV = qs.has('dev') &&
-    (devParam === null || devParam === '' || devParam === '1' || devParam === 'true');
+  <script type="module">
+  (() => {
+    const qs = new URLSearchParams(location.search);
+    const devParam = qs.get('dev');
+    const DEV = qs.has('dev') && (devParam === null || devParam === '' || devParam === '1' || devParam === 'true');
 
-  function bust(u){
-    if (!DEV) return u;
-    const sep = u.includes('?') ? '&' : '?';
-    return u + sep + 'v=' + Date.now();
-  }
-
-  let scene = (qs.get('scene') || qs.get('src') || '').trim();
-  const workerBase = (qs.get('base') || 'https://area-publish.area-webar.workers.dev').replace(/\/$/, '');
-  const overrideGlb  = (qs.get('glb')  || '').trim();
-  const overrideUsdz = (qs.get('usdz') || '').trim();
-
-  const isHttp = (u)=> /^https?:\/\//i.test(u);
-  const isDataOrBlob = (u)=> u.startsWith('data:') || u.startsWith('blob:');
-  const endsWithAny = (u, exts)=> exts.some(ext => u.toLowerCase().endsWith(ext));
-
- let SCENE_GLB  = '';
-let SCENE_JSON = '';
-
-// 1) explizites glb= bevorzugen
-if (overrideGlb) {
-  SCENE_GLB = overrideGlb;
-}
-
-// 2) scene= IMMER für scene.json auswerten (auch wenn glb= gesetzt ist)
-if (scene) {
-  if (isDataOrBlob(scene)) {
-    SCENE_JSON = scene;
-  } else if (isHttp(scene)) {
-    if (endsWithAny(scene, ['.glb','.gltf'])) {
-      if (!SCENE_GLB) SCENE_GLB = scene;
-    } else {
-      SCENE_JSON = scene;
+    function bust(u){
+      if (!DEV || !u) return u;
+      const sep = u.includes('?') ? '&' : '?';
+      return u + sep + 'v=' + Date.now();
     }
-  } else {
-    const id = scene.replace(/\/+$/,'');
-    if (!SCENE_GLB) {
-      SCENE_GLB = `${workerBase}/scenes/${encodeURIComponent(id)}/scene.glb`;
-    }
-    SCENE_JSON = `${workerBase}/scenes/${encodeURIComponent(id)}/scene.json`;
-  }
-}
 
+    let scene = (qs.get('scene') || qs.get('src') || '').trim();
+    const workerBase = (qs.get('base') || 'https://area-publish.area-webar.workers.dev').replace(/\/$/, '');
+    const overrideGlb  = (qs.get('glb')  || '').trim();
+    const overrideUsdz = (qs.get('usdz') || '').trim();
 
-  // --- DOM-Refs & Error-Helper ----------------------------------------------
-  const err = (m)=>{
-    const el = document.getElementById('err');
-    el.textContent = m;
-    el.style.display = 'block';
-    console.error('[area-viewer]', m);
-  };
+    const isHttp = (u)=> /^https?:\/\//i.test(u);
+    const isDataOrBlob = (u)=> u.startsWith('data:') || u.startsWith('blob:');
+    const endsWithAny = (u,exts)=> exts.some(ext=> u.toLowerCase().endsWith(ext));
 
-  const mv      = document.getElementById('mv');
-  const hud     = document.getElementById('hud');
-  const btnPlay = document.getElementById('btnPlay');
-  const btnMute = document.getElementById('btnMute');
-  const arBtn   = document.getElementById('arBtn');
+    let SCENE_GLB = '';
+    let SCENE_JSON = '';
 
-  // --- Config, Audio & UI-Flags ---------------------------------------------
-  let cfg = {
-    model : { url: SCENE_GLB || 'https://modelviewer.dev/shared-assets/models/Astronaut.glb', usdzUrl:null, animation:'*' },
-    target: { previewUrl:null },
-    audio : { src:null, autoplay:'withAnimation', loop:true, volume:0.85 },
-    ui    : { showPlayPause:false, showMute:false, showAR:true, arLabel:'In AR öffnen' },
-    animation: { start:'onPlace' }
-  };
-
-  let uiExplicitPlayPause = false;
-  let uiExplicitMute      = false;
-
-  let audio     = null;
-  let audioReady = false;
-  let muted     = false;
-
-  function setupAudio(){
-    if (!cfg.audio?.src) return;
-    audio = new Audio(cfg.audio.src);
-    audio.crossOrigin = 'anonymous';
-    audio.loop = !!cfg.audio.loop;
-    audio.volume = Number.isFinite(cfg.audio.volume) ? cfg.audio.volume : 0.85;
-    audioReady = true;
-  }
-
-  function setMuted(on){
-    muted = !!on;
-    if (audio && audioReady) audio.muted = muted;
-    btnMute.textContent = muted ? '🔈' : '🔊';
-  }
-
-  // --- Szene + scene.json laden ---------------------------------------------
-  (async () => {
-    try {
-      if (SCENE_GLB) {
-        mv.src = bust(SCENE_GLB) + '#.glb';
+    if (overrideGlb) {
+      SCENE_GLB = overrideGlb;
+    } else if (scene) {
+      if (isDataOrBlob(scene)) {
+        SCENE_JSON = scene;
+      } else if (isHttp(scene)) {
+        if (endsWithAny(scene, ['.glb','.gltf'])) SCENE_GLB = scene;
+        else SCENE_JSON = scene;
+      } else {
+        const id = scene.replace(/\/+$/,'');
+        SCENE_GLB  = `${workerBase}/scenes/${encodeURIComponent(id)}/scene.glb`;
+        SCENE_JSON = `${workerBase}/scenes/${encodeURIComponent(id)}/scene.json`;
       }
+    }
 
-      if (SCENE_JSON) {
-        const r = await fetch(bust(SCENE_JSON), { cache:'no-cache' });
-        if (!r.ok) throw new Error(r.status + ' ' + r.statusText);
-        const j = await r.json();
+    const errBox = document.getElementById('err');
+    const err = (m)=>{
+      errBox.textContent = m;
+      errBox.style.display='block';
+      console.error('[area-viewer]', m);
+    };
 
-        if (j.model)  Object.assign(cfg.model,  j.model);
-        if (j.target) Object.assign(cfg.target, j.target);
-        if (j.audio)  Object.assign(cfg.audio,  j.audio);
+    const mv     = document.getElementById('mv');
+    const hud    = document.getElementById('hud');
+    const btnPlay= document.getElementById('btnPlay');
+    const btnMute= document.getElementById('btnMute');
+    const arBtn  = document.getElementById('arBtn');
 
-        if (j.ui){
-          if ('showPlayPause' in j.ui) { cfg.ui.showPlayPause = !!j.ui.showPlayPause; uiExplicitPlayPause = true; }
-          if ('showMute'      in j.ui) { cfg.ui.showMute      = !!j.ui.showMute;      uiExplicitMute      = true; }
-          if ('showAR'        in j.ui) cfg.ui.showAR = !!j.ui.showAR;
-          if (j.ui.arLabel)            cfg.ui.arLabel = String(j.ui.arLabel);
+    // Default-Konfiguration, wird von scene.json überschrieben
+    const cfg = {
+      model:{ url: SCENE_GLB || "https://modelviewer.dev/shared-assets/models/Astronaut.glb", usdzUrl:null, animation:"*" },
+      target:{ previewUrl:null },
+      audio:{ src:null, autoplay:"withAnimation", loop:true, volume:0.85 },
+      ui:{ showPlayPause:false, showMute:false, showAR:true, arLabel:"In AR öffnen" },
+      animation:{ start:"onStart" } // Optionen: onStart, onPlace, onClick, manual
+    };
 
-          if (j.ui.controls){
-            if ('showPlay' in j.ui.controls) { cfg.ui.showPlayPause = !!j.ui.controls.showPlay; uiExplicitPlayPause = true; }
-            if ('showMute' in j.ui.controls) { cfg.ui.showMute      = !!j.ui.controls.showMute; uiExplicitMute      = true; }
+    let uiExplicitPlayPause = false;
+    let uiExplicitMute = false;
+
+    let audio = null;
+    let audioReady = false;
+    let muted = false;
+
+    function setupAudio(){
+      if (!cfg.audio?.src) return;
+      audio = new Audio(cfg.audio.src);
+      audio.crossOrigin = "anonymous";
+      audio.loop = !!cfg.audio.loop;
+      audio.volume = Number.isFinite(cfg.audio.volume) ? cfg.audio.volume : 0.85;
+      audioReady = true;
+    }
+
+    function setMuted(on){
+      muted = !!on;
+      if (audio && audioReady) audio.muted = muted;
+      btnMute.textContent = muted ? '🔈' : '🔊';
+    }
+
+    // Szene + JSON laden
+    (async () => {
+      try {
+        if (SCENE_GLB) mv.src = bust(SCENE_GLB) + '#.glb';
+
+        if (SCENE_JSON) {
+          const r = await fetch(bust(SCENE_JSON), { cache:'no-cache' });
+          if (!r.ok) throw new Error(r.status + ' ' + r.statusText);
+          const j = await r.json();
+
+          if (j.model)  Object.assign(cfg.model,  j.model);
+          if (j.target) Object.assign(cfg.target, j.target);
+          if (j.audio)  Object.assign(cfg.audio,  j.audio);
+
+          if (j.ui){
+            if ('showPlayPause' in j.ui){ cfg.ui.showPlayPause = !!j.ui.showPlayPause; uiExplicitPlayPause=true; }
+            if ('showMute'      in j.ui){ cfg.ui.showMute      = !!j.ui.showMute;      uiExplicitMute=true; }
+            if ('showAR'        in j.ui) cfg.ui.showAR = !!j.ui.showAR;
+            if (j.ui.arLabel)           cfg.ui.arLabel = String(j.ui.arLabel);
+            if (j.ui.controls){
+              if ('showPlay' in j.ui.controls){ cfg.ui.showPlayPause = !!j.ui.controls.showPlay; uiExplicitPlayPause=true; }
+              if ('showMute' in j.ui.controls){ cfg.ui.showMute      = !!j.ui.controls.showMute; uiExplicitMute=true; }
+            }
+          }
+
+          if (j.animation){
+            if ('clipName' in j.animation) cfg.model.animation = j.animation.clipName;
+            Object.assign(cfg.animation, j.animation);
+          }
+
+          if (!SCENE_GLB && cfg.model.url) {
+            mv.src = bust(cfg.model.url) + '#.glb';
           }
         }
 
-        if (j.animation){
-          if ('clipName' in j.animation) cfg.model.animation = j.animation.clipName;
-          Object.assign(cfg.animation, j.animation);
+        const usdz = overrideUsdz || cfg.model.usdzUrl;
+        if (usdz) mv.setAttribute('ios-src', usdz);
+        else mv.removeAttribute('ios-src');
+
+        if (cfg.target?.previewUrl) mv.setAttribute('poster', cfg.target.previewUrl);
+
+        if (!cfg.ui.showAR) {
+          mv.removeAttribute('ar');
+          arBtn.style.display = 'none';
+        } else {
+          arBtn.textContent = cfg.ui.arLabel || 'In AR öffnen';
         }
 
-        // Falls scene.json ein eigenes model.url setzt:
-        if (!SCENE_GLB && cfg.model.url) {
-          mv.src = bust(cfg.model.url) + '#.glb';
-        }
+        if (cfg.audio?.src) setupAudio();
+
+        const showMuteInitial = uiExplicitMute ? cfg.ui.showMute : !!cfg.audio?.src;
+        btnMute.style.display = showMuteInitial ? '' : 'none';
+
+      } catch (e) {
+        err('scene.json konnte nicht geladen werden: ' + e.message);
+        console.error(e);
       }
+    })();
 
-      const usdz = overrideUsdz || cfg.model.usdzUrl;
-      if (usdz) mv.setAttribute('ios-src', usdz);
-      else      mv.removeAttribute('ios-src');
-
-      if (cfg.target?.previewUrl) mv.setAttribute('poster', cfg.target.previewUrl);
-
-      if (!cfg.ui.showAR) {
-        mv.removeAttribute('ar');
-        arBtn.style.display = 'none';
-      } else {
-        arBtn.textContent = cfg.ui.arLabel || 'In AR öffnen';
-      }
-
-      if (cfg.audio?.src) setupAudio();
-
-      const showMuteInitial = uiExplicitMute ? cfg.ui.showMute : !!cfg.audio?.src;
-      btnMute.style.display = showMuteInitial ? '' : 'none';
-
-    } catch (e) {
-      err('scene.json konnte nicht geladen werden: ' + e.message);
-      console.error(e);
-    }
-  })();
-
-  // --- model-viewer "load" → Animation & Steuerlogik ------------------------
-  mv.addEventListener('load', () => {
-    // Kamera-Setup (Baseline)
-    mv.cameraOrbit  = '0deg 70deg auto';
-    mv.cameraTarget = 'auto';
-    mv.fieldOfView  = '30deg';
-    mv.jumpCameraToGoal();
-
-    const names = mv.availableAnimations || [];
-    console.log('[area-viewer] availableAnimations:', names);
-
-    // Animations-Clip bestimmen
-    const sel = cfg.model.animation;
-    let chosen = null;
-
-    if (sel === 'none') {
-      chosen = null;
-      mv.autoplay = false;
-    } else if (sel === '*' || sel === null || typeof sel === 'undefined') {
-      chosen = names[0] || null;
-      mv.autoplay = !!chosen;
-    } else if (typeof sel === 'string') {
-      if (/^\d+$/.test(sel)) {
-        const idx = Math.max(0, Math.min(names.length - 1, parseInt(sel, 10)));
-        chosen = names[idx] || null;
-      } else {
-        chosen = names.includes(sel) ? sel : (names[0] || null);
-      }
-      mv.autoplay = !!chosen;
-    } else if (Number.isFinite(sel)) {
-      const idx = Math.max(0, Math.min(names.length - 1, sel | 0));
-      chosen = names[idx] || null;
-      mv.autoplay = !!chosen;
+    function togglePlay(mv){
+      if (!mv.animationName) return;
+      if (mv.paused) mv.play(); else mv.pause();
     }
 
-    mv.animationName = chosen;
+    // Flags für OnPlace
+    let inAR = false;
+    let firstARTapDone = false;
 
-    // Start-Mode aus scene.json: onStart (Default) / onPlace / onClick / manual
-    const startMode = String(cfg?.animation?.start || '').toLowerCase();
-    console.log('[area-viewer] chosen:', chosen, 'startMode:', startMode);
+    function setupOnPlaceBehavior(startMode){
+      if (startMode !== 'onplace') return;
 
-    let startOnPlace = false;
-
-    if (startMode === 'manual') {
-      mv.autoplay = false;
-      try { mv.pause(); } catch {}
-    } else if (startMode === 'onplace') {
-      mv.autoplay = false;
-      startOnPlace = true;
-      try { mv.pause(); } catch {}
-    } else if (startMode === 'onclick') {
-      mv.autoplay = false;
-      try { mv.pause(); } catch {}
-      mv.addEventListener('click', () => {
-        if (mv.paused) mv.play(); else mv.pause();
-      });
-    }
-    // onStart/leer → Autoplay wie oben
-
-    // "onPlace" an AR-Status koppeln:
-    // session-started  → Animation starten
-    // not-presenting   → Animation stoppen
-    if (startOnPlace) {
-      const handleArStatus = (ev) => {
-        const st = ev.detail?.status || ev.status;
+      mv.addEventListener('ar-status',(ev)=>{
+        const st = ev.detail && ev.detail.status;
         console.log('[area-viewer] ar-status:', st);
-
         if (st === 'session-started') {
-          if (mv.animationName) {
-            try { mv.play(); } catch {}
+          inAR = true;
+          firstARTapDone = false;
+          // In AR zunächst pausieren, auch wenn Preview animiert war
+          if (!mv.paused) {
+            try { mv.pause(); } catch {}
           }
         } else if (st === 'not-presenting') {
+          inAR = false;
+          firstARTapDone = false;
+          // Beim Verlassen von AR pausieren
           if (!mv.paused) {
             try { mv.pause(); } catch {}
           }
         }
-      };
-      mv.addEventListener('ar-status', handleArStatus);
+      });
+
+      mv.addEventListener('click', ()=>{
+        if (!inAR) return;
+        if (!mv.animationName) return;
+
+        if (!firstARTapDone) {
+          // Erster Tap nach AR-Start = Platzierung → Animation starten
+          firstARTapDone = true;
+          try { mv.play(); } catch {}
+        } else {
+          // Weitere Taps in AR toggeln Play/Pause
+          togglePlay(mv);
+        }
+      });
     }
 
-    // HUD/Buttons
-    const showPlay = uiExplicitPlayPause ? cfg.ui.showPlayPause : (names.length > 0);
-    btnPlay.style.display = showPlay ? '' : 'none';
-    const anyHud = (btnPlay.style.display !== 'none') || (btnMute.style.display !== 'none');
-    hud.classList.toggle('hidden', !anyHud);
+    // Wenn das Modell samt Animation geladen ist
+    mv.addEventListener('load', ()=>{
+      // Kamera-Basis
+      mv.cameraOrbit  = '0deg 70deg auto';
+      mv.cameraTarget = 'auto';
+      mv.fieldOfView  = '30deg';
+      try { mv.jumpCameraToGoal(); } catch {}
 
-    // Audio-Autoplay (bei erster User-Interaktion)
-    if (audio && cfg.audio.autoplay === 'auto') {
-      const kick = () => { try { audio.play(); } catch {} };
-      window.addEventListener('pointerdown', kick, { once:true });
-    }
+      const names = mv.availableAnimations || [];
+      console.log('[area-viewer] availableAnimations:', names);
 
-    // Play/Pause-Events mit Audio koppeln
-    mv.addEventListener('play', () => {
-      if (audio && cfg.audio.autoplay === 'withAnimation' && !audio.muted) {
-        try { audio.play(); } catch {}
+      const sel = cfg.model.animation;
+      let chosen = null;
+
+      if (sel === 'none') {
+        chosen = null;
+        mv.autoplay = false;
+      } else if (sel === '*' || sel === null || typeof sel === 'undefined') {
+        chosen = names[0] || null;
+        mv.autoplay = !!chosen;
+      } else if (typeof sel === 'string') {
+        if (/^\d+$/.test(sel)) {
+          const idx = Math.max(0, Math.min(names.length-1, parseInt(sel,10)));
+          chosen = names[idx] || null;
+        } else {
+          chosen = names.includes(sel) ? sel : (names[0] || null);
+        }
+        mv.autoplay = !!chosen;
+      } else if (Number.isFinite(sel)) {
+        const idx = Math.max(0, Math.min(names.length-1, sel|0));
+        chosen = names[idx] || null;
+        mv.autoplay = !!chosen;
       }
-      btnPlay.textContent = '⏸';
+
+      mv.animationName = chosen;
+
+      const startModeRaw = (cfg.animation && cfg.animation.start) ? String(cfg.animation.start) : 'onStart';
+      const startMode = startModeRaw.toLowerCase();
+      console.log('[area-viewer] chosen:', chosen, 'startMode:', startMode);
+
+      // Startmodi
+      if (startMode === 'manual') {
+        mv.autoplay = false;
+        try { mv.pause(); } catch {}
+      } else if (startMode === 'onclick') {
+        mv.autoplay = false;
+        try { mv.pause(); } catch {}
+        mv.addEventListener('click', ()=> togglePlay(mv));
+      } else if (startMode === 'onplace') {
+        // Preview darf weiter autoplay haben – OnPlace greift nur in AR
+        setupOnPlaceBehavior(startMode);
+      }
+      // onStart (oder unbekannt) → Standard: autoplay in Preview + AR
+
+      // HUD Sichtbarkeit
+      const showPlay = uiExplicitPlayPause ? cfg.ui.showPlayPause : (names.length > 0);
+      btnPlay.style.display = showPlay ? '' : 'none';
+      const anyHud = (btnPlay.style.display !== 'none') || (btnMute.style.display !== 'none');
+      hud.classList.toggle('hidden', !anyHud);
+
+      // Audio mit Animation koppeln
+      if (audio && cfg.audio.autoplay === 'auto'){
+        const kick = ()=>{ try{ audio.play(); }catch{} };
+        window.addEventListener('pointerdown', kick, { once:true });
+      }
+
+      mv.addEventListener('play', ()=>{
+        if (audio && cfg.audio.autoplay === 'withAnimation' && !audio.muted){
+          try{ audio.play(); }catch{}
+        }
+        btnPlay.textContent = '⏸';
+      });
+      mv.addEventListener('pause', ()=>{
+        if (audio && cfg.audio.autoplay === 'withAnimation' && !audio.paused){
+          try{ audio.pause(); }catch{}
+        }
+        btnPlay.textContent = '▶︎';
+      });
     });
 
-    mv.addEventListener('pause', () => {
-      if (audio && cfg.audio.autoplay === 'withAnimation' && !audio.paused) {
-        try { audio.pause(); } catch {}
-      }
-      btnPlay.textContent = '▶︎';
-    });
-  });
+    // HUD Buttons
+    btnPlay.addEventListener('click', ()=> togglePlay(mv));
+    btnMute.addEventListener('click', ()=> setMuted(!muted));
 
-  // --- HUD-Buttons ----------------------------------------------------------
-  btnPlay.addEventListener('click', () => {
-    if (mv.paused) mv.play(); else mv.pause();
-  });
-
-  btnMute.addEventListener('click', () => {
-    setMuted(!muted);
-  });
-</script>
+  })();
+  </script>
 </body>
 </html>
