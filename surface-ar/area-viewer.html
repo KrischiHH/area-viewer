@@ -40,6 +40,15 @@
       box-shadow:0 18px 40px rgba(0,0,0,0.6);
       border:1px solid rgba(255,255,255,0.15);
     }
+    #posterImage{
+      width:100%;
+      max-height:220px;
+      object-fit:cover;
+      border-radius:16px;
+      display:none; /* nur zeigen, wenn wir eine URL haben */
+      margin-bottom:16px;
+      background:#111;
+    }
     #poster h1{
       font-size:22px;
       margin:0 0 8px;
@@ -66,7 +75,7 @@
       cursor:wait;
     }
 
-    /* model-viewer als AR-Host (Preview ist egal, Poster liegt oben drüber) */
+    /* model-viewer als AR-Host (Preview wird vom Poster verdeckt) */
     model-viewer{
       position:fixed;
       inset:0;
@@ -74,34 +83,6 @@
       height:100svh;
       display:block;
       background:#000;
-    }
-
-    /* Einfaches HUD für Play/Pause (Overlay in WebXR) */
-    #hud{
-      position:fixed;
-      right:max(12px,env(safe-area-inset-right));
-      bottom:max(12px,env(safe-area-inset-bottom));
-      display:flex;
-      gap:8px;
-      z-index:6; /* über model-viewer / AR-Overlay */
-      background:rgba(0,0,0,.35);
-      border:1px solid rgba(255,255,255,.18);
-      padding:6px 8px;
-      border-radius:999px;
-      backdrop-filter:blur(8px);
-      align-items:center;
-    }
-    #hud.hidden{display:none}
-    #hud button{
-      all:unset;
-      cursor:pointer;
-      padding:6px 10px;
-      border-radius:999px;
-      color:#fff;
-      user-select:none;
-      font-size:13px;
-      border:1px solid rgba(255,255,255,0.25);
-      background:rgba(0,0,0,0.35);
     }
 
     #err{
@@ -126,6 +107,7 @@
   <!-- Willkommen-Poster -->
   <div id="poster">
     <div id="poster-inner">
+      <img id="posterImage" alt="">
       <h1 id="posterTitle">ARea AR-Erlebnis</h1>
       <p id="posterDesc">
         Tippe auf „AR starten“, richte dein Gerät auf eine ebene Fläche und platziere dann das 3D-Modell.
@@ -149,11 +131,6 @@
     field-of-view="30deg"
     poster="">
   </model-viewer>
-
-  <!-- HUD: Play/Pause, sichtbar wenn Animation vorhanden -->
-  <div id="hud" class="hidden">
-    <button id="btnPlay" title="Animation starten/pausieren">▶︎</button>
-  </div>
 
   <script type="module">
   (() => {
@@ -229,8 +206,7 @@
     const startBtn    = document.getElementById('startAr');
     const posterTitle = document.getElementById('posterTitle');
     const posterDesc  = document.getElementById('posterDesc');
-    const hud         = document.getElementById('hud');
-    const btnPlay     = document.getElementById('btnPlay');
+    const posterImage = document.getElementById('posterImage');
 
     function showError(msg){
       errBox.textContent = msg;
@@ -243,10 +219,8 @@
       model:{ url: SCENE_GLB || "https://modelviewer.dev/shared-assets/models/Astronaut.glb", usdzUrl:null, animation:"*" },
       target:{ previewUrl:null },
       ui:{ showAR:true, arLabel:"AR starten" },
-      animation:{ start:"onStart" } // onStart | onPlace | onClick | manual
+      meta:{ title:null, description:null, posterUrl:null }
     };
-
-    let isPlaying = false;
 
     // --------- Szene + JSON laden ---------
     (async () => {
@@ -262,13 +236,26 @@
             if ('showAR'  in j.ui) cfg.ui.showAR  = !!j.ui.showAR;
             if (j.ui.arLabel)      cfg.ui.arLabel = String(j.ui.arLabel);
           }
-          if (j.animation){
-            if ('clipName' in j.animation) cfg.model.animation = j.animation.clipName;
-            Object.assign(cfg.animation, j.animation);
+          if (j.meta){
+            if (j.meta.title)        cfg.meta.title       = String(j.meta.title);
+            if (j.meta.description)  cfg.meta.description = String(j.meta.description);
+            if (j.meta.posterUrl)    cfg.meta.posterUrl   = String(j.meta.posterUrl);
           }
+          // Fallback: falls kein meta.posterUrl, aber target.previewUrl gesetzt ist
+          if (!cfg.meta.posterUrl && j.target?.previewUrl) {
+            cfg.meta.posterUrl = String(j.target.previewUrl);
+          }
+        }
 
-          if (j.meta?.title)       posterTitle.textContent = j.meta.title;
-          if (j.meta?.description) posterDesc.textContent  = j.meta.description;
+        // Texte vom JSON auf Poster übertragen (falls vorhanden)
+        if (cfg.meta.title)       posterTitle.textContent = cfg.meta.title;
+        if (cfg.meta.description) posterDesc.textContent  = cfg.meta.description;
+
+        if (cfg.meta.posterUrl) {
+          posterImage.src = cfg.meta.posterUrl;
+          posterImage.style.display = 'block';
+        } else {
+          posterImage.style.display = 'none';
         }
 
         // finale GLB-URL
@@ -293,7 +280,7 @@
       }
     })();
 
-    // --------- Animation / HUD nach GLB-Load ---------
+    // --------- Animation: einfach "wenn da, dann läuft sie" ---------
     mv.addEventListener('load', () => {
       const names = mv.availableAnimations || [];
       console.log('[area-viewer] availableAnimations:', names);
@@ -317,64 +304,15 @@
         chosen = names[idx] || null;
       }
 
-      const startModeRaw = (cfg.animation && cfg.animation.start) ? String(cfg.animation.start) : 'onStart';
-      const startMode = startModeRaw.toLowerCase();
-      console.log('[area-viewer] chosen:', chosen, 'startMode:', startMode);
+      console.log('[area-viewer] chosen animation:', chosen);
 
       if (chosen == null) {
         mv.animationName = null;
         mv.autoplay = false;
       } else {
         mv.animationName = chosen;
-      }
-
-      // Startzustand:
-      // - onStart  → animiert
-      // - onPlace → in diesem Viewer ebenfalls animiert (wie onStart)
-      // - manual / onClick → pausiert, Frame 0
-      if (startMode === 'manual' || startMode === 'onclick') {
-        mv.autoplay = false;
-        try { mv.pause(); } catch {}
-        try { mv.currentTime = 0; } catch {}
-        isPlaying = false;
-      } else {
-        mv.autoplay = !!chosen;
-        if (mv.autoplay && typeof mv.play === 'function') {
-          try { mv.play(); isPlaying = true; } catch {}
-        }
-      }
-
-      // HUD nur anzeigen, wenn es überhaupt eine Animation gibt
-      if (chosen) {
-        hud.classList.remove('hidden');
-      } else {
-        hud.classList.add('hidden');
-      }
-
-      // initialer Button-Status
-      btnPlay.textContent = isPlaying ? '⏸' : '▶︎';
-
-      mv.addEventListener('play', () => {
-        isPlaying = true;
-        btnPlay.textContent = '⏸';
-      });
-      mv.addEventListener('pause', () => {
-        isPlaying = false;
-        btnPlay.textContent = '▶︎';
-      });
-    });
-
-    // --------- Play/Pause-Button (Preview + WebXR-AR) ---------
-    btnPlay.addEventListener('click', () => {
-      if (!mv.animationName) return;
-      try {
-        if (!isPlaying) {
-          mv.play();
-        } else {
-          mv.pause();
-        }
-      } catch(e){
-        console.warn('[area-viewer] Play/Pause-Toggle fehlgeschlagen:', e);
+        mv.autoplay = true;
+        try { mv.play(); } catch(e){ console.warn('[area-viewer] play() failed:', e); }
       }
     });
 
