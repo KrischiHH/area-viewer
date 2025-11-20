@@ -163,7 +163,7 @@
     console.log('[area-viewer] workerBase:', workerBase);
 
     // --------- URL-Parsing / Szenenpfade ---------
-    let scene = (qs.get('scene') || qs.get('src') || '').trim();
+    const sceneId = (qs.get('scene') || qs.get('src') || '').trim();
     const overrideGlb  = (qs.get('glb')  || '').trim();
     const overrideUsdz = (qs.get('usdz') || '').trim();
 
@@ -178,17 +178,16 @@
       SCENE_GLB = overrideGlb;
     }
 
-    if (scene) {
-      if (isDataOrBlob(scene)) {
-        SCENE_JSON = scene;
-      } else if (isHttp(scene)) {
-        if (endsWithAny(scene, ['.glb','.gltf'])) {
-          if (!SCENE_GLB) SCENE_GLB = scene;
+    if (sceneId) {
+      if (isHttp(sceneId)) {
+        // Selten: scene als direkte URL
+        if (endsWithAny(sceneId, ['.glb','.gltf'])) {
+          if (!SCENE_GLB) SCENE_GLB = sceneId;
         } else {
-          SCENE_JSON = scene;
+          SCENE_JSON = sceneId;
         }
       } else {
-        const id = scene.replace(/\/+$/,'');
+        const id = sceneId.replace(/\/+$/,'');
         if (!SCENE_GLB) {
           SCENE_GLB  = `${workerBase}/scenes/${encodeURIComponent(id)}/scene.glb`;
         }
@@ -216,10 +215,23 @@
 
     // --------- Konfig mit Defaults ---------
     const cfg = {
-      model:{ url: SCENE_GLB || "https://modelviewer.dev/shared-assets/models/Astronaut.glb", usdzUrl:null, animation:"*" },
-      target:{ previewUrl:null },
-      ui:{ showAR:true, arLabel:"AR starten" },
-      meta:{ title:null, description:null, posterUrl:null }
+      glbUrl: SCENE_GLB || "https://modelviewer.dev/shared-assets/models/Astronaut.glb",
+      usdzUrl: null,
+      animation: {
+        clipName: "*",
+        loop: true,        // true = wiederholen, false = einmal
+        iterations: 9999   // Anzahl Wiederholungen, bei loop=true
+      },
+      meta:{
+        title: null,
+        description: null
+      },
+      welcome:{
+        eyebrow: "",
+        title: "",
+        desc: "",
+        posterFile: null
+      }
     };
 
     // --------- Szene + JSON laden ---------
@@ -229,49 +241,79 @@
           const r = await fetch(bust(SCENE_JSON), { cache:'no-cache' });
           if (!r.ok) throw new Error('scene.json: ' + r.status + ' ' + r.statusText);
           const j = await r.json();
+          console.log('[area-viewer] scene.json:', j);
 
-          if (j.model)  Object.assign(cfg.model,  j.model);
-          if (j.target) Object.assign(cfg.target, j.target);
-          if (j.ui){
-            if ('showAR'  in j.ui) cfg.ui.showAR  = !!j.ui.showAR;
-            if (j.ui.arLabel)      cfg.ui.arLabel = String(j.ui.arLabel);
+          // Animation
+          if (j.animation) {
+            if (j.animation.clipName)   cfg.animation.clipName   = String(j.animation.clipName);
+            if (typeof j.animation.loop === 'boolean') cfg.animation.loop = j.animation.loop;
+            if (Number.isFinite(j.animation.iterations)) cfg.animation.iterations = j.animation.iterations|0;
           }
-          if (j.meta){
-            if (j.meta.title)        cfg.meta.title       = String(j.meta.title);
-            if (j.meta.description)  cfg.meta.description = String(j.meta.description);
-            if (j.meta.posterUrl)    cfg.meta.posterUrl   = String(j.meta.posterUrl);
+
+          // Meta
+          if (j.meta) {
+            if (typeof j.meta.title === 'string')       cfg.meta.title       = j.meta.title;
+            if (typeof j.meta.description === 'string') cfg.meta.description = j.meta.description;
           }
-          // Fallback: falls kein meta.posterUrl, aber target.previewUrl gesetzt ist
-          if (!cfg.meta.posterUrl && j.target?.previewUrl) {
-            cfg.meta.posterUrl = String(j.target.previewUrl);
+
+          // Welcome / Poster (Light-Editor: ui.welcome.*)
+          if (j.ui && j.ui.welcome) {
+            const wl = j.ui.welcome;
+            if (typeof wl.title === 'string' && wl.title)   cfg.welcome.title   = wl.title;
+            if (typeof wl.desc === 'string' && wl.desc)     cfg.welcome.desc    = wl.desc;
+            if (typeof wl.eyebrow === 'string' && wl.eyebrow) cfg.welcome.eyebrow = wl.eyebrow;
+            if (typeof wl.poster === 'string' && wl.poster) cfg.welcome.posterFile = wl.poster;
+          }
+
+          // Model-URL (relativ aus JSON) als Fallback
+          if (j.model && j.model.url && !overrideGlb) {
+            // Falls es "scene.glb" ist, nehmen wir SCENE_GLB; sonst die absolute URL daraus machen.
+            if (!SCENE_GLB) {
+              if (sceneId && !isHttp(j.model.url)) {
+                cfg.glbUrl = `${workerBase}/scenes/${encodeURIComponent(sceneId)}/${j.model.url}`;
+              } else {
+                cfg.glbUrl = j.model.url;
+              }
+            }
+          }
+
+          // Audio/USDC später, fürs Erste ignorieren oder nur usdz übernehmen
+          if (j.model && j.model.usdzUrl && !overrideUsdz) {
+            cfg.usdzUrl = j.model.usdzUrl;
           }
         }
 
-        // Texte vom JSON auf Poster übertragen (falls vorhanden)
-        if (cfg.meta.title)       posterTitle.textContent = cfg.meta.title;
-        if (cfg.meta.description) posterDesc.textContent  = cfg.meta.description;
+        // Texte auf Poster anwenden
+        const finalTitle = cfg.meta.title || cfg.welcome.title || "ARea AR-Erlebnis";
+        const finalDesc  = cfg.meta.description || cfg.welcome.desc ||
+          "Tippe auf „AR starten“, richte dein Gerät auf eine ebene Fläche und platziere dann das 3D-Modell.";
 
-        if (cfg.meta.posterUrl) {
-          posterImage.src = cfg.meta.posterUrl;
+        posterTitle.textContent = finalTitle;
+        posterDesc.textContent  = finalDesc;
+
+        // Poster-Bild: bevorzugt ui.welcome.poster (Dateiname aus Editor)
+        let posterUrl = null;
+        if (cfg.welcome.posterFile && sceneId) {
+          posterUrl = `${workerBase}/scenes/${encodeURIComponent(sceneId)}/${encodeURIComponent(cfg.welcome.posterFile)}`;
+        }
+
+        if (posterUrl) {
+          posterImage.src = posterUrl;
           posterImage.style.display = 'block';
         } else {
           posterImage.style.display = 'none';
         }
 
         // finale GLB-URL
-        const finalGlb = SCENE_GLB || cfg.model.url || "https://modelviewer.dev/shared-assets/models/Astronaut.glb";
+        const finalGlb = SCENE_GLB || cfg.glbUrl || "https://modelviewer.dev/shared-assets/models/Astronaut.glb";
         mv.src = bust(finalGlb);
 
-        const usdzUrl = overrideUsdz || cfg.model.usdzUrl;
-        if (usdzUrl) mv.setAttribute('ios-src', usdzUrl);
-        else mv.removeAttribute('ios-src');
-
-        if (!cfg.ui.showAR) {
-          mv.removeAttribute('ar');
-          startBtn.disabled = true;
-          startBtn.textContent = 'AR nicht verfügbar';
+        if (overrideUsdz) {
+          mv.setAttribute('ios-src', overrideUsdz);
+        } else if (cfg.usdzUrl) {
+          mv.setAttribute('ios-src', cfg.usdzUrl);
         } else {
-          startBtn.textContent = cfg.ui.arLabel || 'AR starten';
+          mv.removeAttribute('ios-src');
         }
 
       } catch(e){
@@ -280,17 +322,18 @@
       }
     })();
 
-    // --------- Animation: einfach "wenn da, dann läuft sie" ---------
+    // --------- Animation + Loop / Wiederholungen ---------
     mv.addEventListener('load', () => {
       const names = mv.availableAnimations || [];
       console.log('[area-viewer] availableAnimations:', names);
 
-      const sel = cfg.model.animation;
+      // Clip auswählen: cfg.animation.clipName oder fallback erster Clip
+      let sel = cfg.animation.clipName;
       let chosen = null;
 
       if (sel === 'none') {
         chosen = null;
-      } else if (sel === '*' || sel === null || typeof sel === 'undefined') {
+      } else if (sel === '*' || sel == null) {
         chosen = names[0] || null;
       } else if (typeof sel === 'string') {
         if (/^\d+$/.test(sel)) {
@@ -304,15 +347,63 @@
         chosen = names[idx] || null;
       }
 
-      console.log('[area-viewer] chosen animation:', chosen);
+      console.log('[area-viewer] chosen animation:', chosen,
+                  'loop:', cfg.animation.loop,
+                  'iterations:', cfg.animation.iterations);
 
-      if (chosen == null) {
+      if (!chosen) {
         mv.animationName = null;
         mv.autoplay = false;
+        return;
+      }
+
+      mv.animationName = chosen;
+      mv.autoplay = true;
+
+      try { mv.play(); } catch(e){ console.warn('[area-viewer] play() failed:', e); }
+
+      // Loop-Logik:
+      // - loop = true  + iterations  = N  → N Wiederholungen, dann Pause
+      // - loop = true  + iterations >= 9999 → effektiv: Endlosschleife
+      // - loop = false → einmal abspielen
+      const loopFlag = !!cfg.animation.loop;
+      const itRaw    = cfg.animation.iterations;
+      let repeatTotal = null;
+
+      if (loopFlag) {
+        if (Number.isFinite(itRaw) && itRaw > 0 && itRaw < 9999) {
+          repeatTotal = itRaw;
+        } else {
+          // Endlosschleife → kein Counter
+          repeatTotal = null;
+        }
       } else {
-        mv.animationName = chosen;
-        mv.autoplay = true;
-        try { mv.play(); } catch(e){ console.warn('[area-viewer] play() failed:', e); }
+        repeatTotal = 1; // einmal abspielen
+      }
+
+      if (repeatTotal && repeatTotal > 0) {
+        let loops    = 0;
+        let lastTime = 0;
+        let stopped  = false;
+
+        const onTimeUpdate = () => {
+          if (stopped) return;
+          const t = mv.currentTime || 0;
+          // Wenn currentTime "zurückspringt" → neuer Loop
+          if (t < lastTime) {
+            loops++;
+            console.log('[area-viewer] loop detected, count =', loops);
+            if (loops >= repeatTotal) {
+              try { mv.pause(); } catch {}
+              stopped = true;
+              mv.removeEventListener('timeupdate', onTimeUpdate);
+              return;
+            }
+          }
+          lastTime = t;
+        };
+
+        mv.addEventListener('timeupdate', onTimeUpdate);
       }
     });
 
