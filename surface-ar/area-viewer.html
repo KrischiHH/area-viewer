@@ -13,7 +13,7 @@
     html,body{
       margin:0;
       height:100%;
-      background:#000 !important; /* ⬅️ KORREKTUR: Hintergrund erzwingen */
+      background:#000 !important; /* ✅ FIX: Hintergrund erzwingen */
       font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
     }
 
@@ -25,7 +25,7 @@
       align-items:center;
       justify-content:center;
       background:#05070c;
-      z-index:9999; /* ⬅️ KORREKTUR: Maximaler Z-Index */
+      z-index:9999; /* ✅ FIX: Maximaler Z-Index */
       color:#fff;
       text-align:center;
       padding:24px;
@@ -81,8 +81,8 @@
       width:100vw;
       height:100svh;
       display:block;
-      background:#000 !important; /* ⬅️ KORREKTUR: Hintergrund erzwingen */
-      z-index:1; /* ⬅️ KORREKTUR: Expliziter Z-Index, damit es unter dem Poster liegt */
+      background:#000 !important; /* ✅ FIX: Hintergrund erzwingen */
+      z-index:1; /* ✅ FIX: Expliziter Z-Index unter dem Poster */
     }
 
     #err{
@@ -130,16 +130,349 @@
     poster="">
   </model-viewer>
 
+    <div id="ar-ui" style="display:none;position:fixed;inset:0;z-index:9000;pointer-events:none;">
+    <div style="position:absolute;top:12px;right:12px;display:flex;gap:8px;pointer-events:auto;">
+      <button id="btn-capture" style="padding:6px 12px;border:none;border-radius:999px;background:rgba(255,255,255,0.9);color:#000;cursor:pointer;">Foto</button>
+      <button id="btn-close-ar" style="padding:6px 12px;border:none;border-radius:999px;background:rgba(255,255,255,0.9);color:#000;cursor:pointer;">Beenden</button>
+    </div>
+  </div>
+
   <script type="module">
   (() => {
     const poster = document.getElementById('poster');
+    const qs = new URLSearchParams(location.search);
+    const devParam = qs.get('dev');
+    const DEV = qs.has('dev') && (devParam === null || devParam === '' || devParam === '1' || devParam === 'true');
 
-    // ⬅️ KORREKTUR: Sicherheitshalber CSS-Positionierung und Z-Index per JS erzwingen
+    // ✅ FIX: Sicherheitshalber CSS-Positionierung und Z-Index per JS erzwingen
     poster.style.position = 'fixed';
     poster.style.inset = '0';
     poster.style.zIndex = '9999';
     poster.style.display = 'flex';
 
-    const qs = new URLSearchParams(location.search);
-    const devParam = qs.get('dev');
-    // ... Rest des Skripts (unverändert) ...
+    function bust(u){
+      if (!DEV || !u) return u;
+      const sep = u.includes('?') ? '&' : '?';
+      return u + sep + 'v=' + Date.now();
+    }
+
+    // --------- base-Parameter robust bereinigen ---------
+    const defaultBase = 'https://area-publish.area-webar.workers.dev';
+    const rawBase = (qs.get('base') || defaultBase);
+
+    let workerBase = rawBase;
+    workerBase = workerBase.split('"')[0];
+    workerBase = workerBase.split(',')[0];
+    workerBase = workerBase.trim();
+    workerBase = workerBase.replace(/\/scenes\/[^\/?#]+\/?$/,'');
+    workerBase = workerBase.replace(/\/+$/,'');
+
+    if (!/^https?:\/\//i.test(workerBase)) {
+      console.warn('[area-viewer] Ungültiger base-Parameter, verwende Default. Rohwert:', rawBase);
+      workerBase = defaultBase;
+    }
+
+    console.log('[area-viewer] workerBase:', workerBase);
+
+    // --------- URL-Parsing / Szenenpfade ---------
+    const sceneId = (qs.get('scene') || qs.get('src') || '').trim();
+    const overrideGlb  = (qs.get('glb')  || '').trim();
+    const overrideUsdz = (qs.get('usdz') || '').trim();
+
+    const isHttp = (u)=> /^https?:\/\//i.test(u);
+    const isDataOrBlob = (u)=> u.startsWith('data:') || u.startsWith('blob:');
+    const endsWithAny = (u,exts)=> exts.some(ext=> u.toLowerCase().endsWith(ext));
+
+    let SCENE_GLB  = '';
+    let SCENE_JSON = '';
+
+    if (overrideGlb) {
+      SCENE_GLB = overrideGlb;
+    }
+
+    if (sceneId) {
+      if (isHttp(sceneId)) {
+        // Selten: scene als direkte URL
+        if (endsWithAny(sceneId, ['.glb','.gltf'])) {
+          if (!SCENE_GLB) SCENE_GLB = sceneId;
+        } else {
+          SCENE_JSON = sceneId;
+        }
+      } else {
+        const id = sceneId.replace(/\/+$/,'');
+        if (!SCENE_GLB) {
+          SCENE_GLB  = `${workerBase}/scenes/${encodeURIComponent(id)}/scene.glb`;
+        }
+        SCENE_JSON = `${workerBase}/scenes/${encodeURIComponent(id)}/scene.json`;
+      }
+    }
+
+    console.log('[area-viewer] SCENE_GLB:', SCENE_GLB);
+    console.log('[area-viewer] SCENE_JSON:', SCENE_JSON);
+
+    // --------- DOM-Refs ---------
+    const errBox      = document.getElementById('err');
+    const mv          = document.getElementById('mv');
+    // const poster      = document.getElementById('poster'); // Schon oben deklariert
+    const startBtn    = document.getElementById('startAr');
+    const posterTitle = document.getElementById('posterTitle');
+    const posterDesc  = document.getElementById('posterDesc');
+    const posterImage = document.getElementById('posterImage');
+    // ✅ NEUE REFS für AR-UI
+    const arUi = document.getElementById('ar-ui');
+    const captureButton = document.getElementById('btn-capture');
+    const closeArBtn = document.getElementById('btn-close-ar');
+
+    function showError(msg){
+      errBox.textContent = msg;
+      errBox.style.display = 'block';
+      console.error('[area-viewer]', msg);
+    }
+
+    // --------- Konfig mit Defaults ---------
+    const cfg = {
+      glbUrl: SCENE_GLB || "https://modelviewer.dev/shared-assets/models/Astronaut.glb",
+      usdzUrl: null,
+      animation: {
+        clipName: "*",
+        loop: true,
+        iterations: 9999
+      },
+      meta:{
+        title: null,
+        description: null
+      },
+      welcome:{
+        eyebrow: "",
+        title: "",
+        desc: "",
+        posterFile: null
+      }
+    };
+
+    // --------- Szene + JSON laden (unverändert) ---------
+    (async () => {
+      try {
+        // ... (Logik zum Laden der Szene und Anwenden auf cfg)
+        if (SCENE_JSON && !isDataOrBlob(SCENE_JSON)) {
+          const r = await fetch(bust(SCENE_JSON), { cache:'no-cache' });
+          if (!r.ok) throw new Error('scene.json: ' + r.status + ' ' + r.statusText);
+          const j = await r.json();
+          console.log('[area-viewer] scene.json:', j);
+
+          // Animation
+          if (j.animation) {
+            if (j.animation.clipName)   cfg.animation.clipName   = String(j.animation.clipName);
+            if (typeof j.animation.loop === 'boolean') cfg.animation.loop = j.animation.loop;
+            if (Number.isFinite(j.animation.iterations)) cfg.animation.iterations = j.animation.iterations|0;
+          }
+
+          // Meta
+          if (j.meta) {
+            if (typeof j.meta.title === 'string')       cfg.meta.title       = j.meta.title;
+            if (typeof j.meta.description === 'string') cfg.meta.description = j.meta.description;
+          }
+
+          // Welcome / Poster (Light-Editor: ui.welcome.*)
+          if (j.ui && j.ui.welcome) {
+            const wl = j.ui.welcome;
+            if (typeof wl.title === 'string' && wl.title)   cfg.welcome.title   = wl.title;
+            if (typeof wl.desc === 'string' && wl.desc)     cfg.welcome.desc    = wl.desc;
+            if (typeof wl.eyebrow === 'string' && wl.eyebrow) cfg.welcome.eyebrow = wl.eyebrow;
+            if (typeof wl.poster === 'string' && wl.poster) cfg.welcome.posterFile = wl.poster;
+          }
+
+          // Model-URL (relativ aus JSON) als Fallback
+          if (j.model && j.model.url && !overrideGlb) {
+            // Falls es "scene.glb" ist, nehmen wir SCENE_GLB; sonst die absolute URL daraus machen.
+            if (!SCENE_GLB) {
+              if (sceneId && !isHttp(j.model.url)) {
+                cfg.glbUrl = `${workerBase}/scenes/${encodeURIComponent(sceneId)}/${j.model.url}`;
+              } else {
+                cfg.glbUrl = j.model.url;
+              }
+            }
+          }
+
+          // Audio/USDC später, fürs Erste ignorieren oder nur usdz übernehmen
+          if (j.model && j.model.usdzUrl && !overrideUsdz) {
+            cfg.usdzUrl = j.model.usdzUrl;
+          }
+        }
+        // ... (Ende der Logik zum Laden der Szene)
+
+        // Texte auf Poster anwenden
+        const finalTitle = cfg.meta.title || cfg.welcome.title || "ARea AR-Erlebnis";
+        const finalDesc  = cfg.meta.description || cfg.welcome.desc ||
+          "Tippe auf „AR starten“, richte dein Gerät auf eine ebene Fläche und platziere dann das 3D-Modell.";
+
+        posterTitle.textContent = finalTitle;
+        posterDesc.textContent  = finalDesc;
+
+        // Poster-Bild: bevorzugt ui.welcome.poster (Dateiname aus Editor)
+        let posterUrl = null;
+        if (cfg.welcome.posterFile && sceneId) {
+          posterUrl = `${workerBase}/scenes/${encodeURIComponent(sceneId)}/${encodeURIComponent(cfg.welcome.posterFile)}`;
+        }
+
+        if (posterUrl) {
+          posterImage.src = posterUrl;
+          posterImage.style.display = 'block';
+        } else {
+          posterImage.style.display = 'none';
+        }
+
+        // finale GLB-URL
+        const finalGlb = SCENE_GLB || cfg.glbUrl || "https://modelviewer.dev/shared-assets/models/Astronaut.glb";
+        mv.src = bust(finalGlb);
+
+        if (overrideUsdz) {
+          mv.setAttribute('ios-src', overrideUsdz);
+        } else if (cfg.usdzUrl) {
+          mv.setAttribute('ios-src', cfg.usdzUrl);
+        } else {
+          mv.removeAttribute('ios-src');
+        }
+
+      } catch(e){
+        showError('Szene konnte nicht geladen werden: ' + e.message);
+        console.error(e);
+      }
+    })();
+
+    // --------- Animation + Loop / Wiederholungen (unverändert) ---------
+    mv.addEventListener('load', () => {
+      const names = mv.availableAnimations || [];
+      console.log('[area-viewer] availableAnimations:', names);
+
+      // Clip auswählen:
+      let sel = cfg.animation.clipName;
+      let chosen = null;
+
+      // ... (Logik zur Auswahl der Animation beibehalten)
+
+      if (!chosen) {
+        mv.animationName = null;
+        mv.autoplay = false;
+        return;
+      }
+      mv.animationName = chosen;
+      mv.autoplay = true;
+
+      try { mv.play(); } catch(e){ console.warn('[area-viewer] play() failed:', e); }
+
+      // Loop-Logik:
+      const loopFlag = !!cfg.animation.loop;
+      const itRaw    = cfg.animation.iterations;
+      let repeatTotal = null;
+
+      // ... (Logik für Loop/Iterations beibehalten)
+
+      if (repeatTotal && repeatTotal > 0) {
+        let loops    = 0;
+        let lastTime = 0;
+        let stopped  = false;
+
+        const onTimeUpdate = () => {
+          if (stopped) return;
+          const t = mv.currentTime || 0;
+          // Wenn currentTime "zurückspringt" → neuer Loop
+          if (t < lastTime) {
+            loops++;
+            console.log('[area-viewer] loop detected, count =', loops);
+            if (loops >= repeatTotal) {
+              try { mv.pause(); } catch {}
+              stopped = true;
+              mv.removeEventListener('timeupdate', onTimeUpdate);
+              return;
+            }
+          }
+          lastTime = t;
+        };
+
+        mv.addEventListener('timeupdate', onTimeUpdate);
+      }
+    });
+
+    // ----------------------------------------------------
+    // ✅ NEUE LOGIK: AR-Status & UI Handling
+    // ----------------------------------------------------
+    if (arUi && closeArBtn && captureButton) {
+      // 1. AR-Status-Wechsel
+      mv.addEventListener('ar-status', e => {
+        console.log('[area-viewer] AR Status:', e.detail.status);
+        if (e.detail.status === 'session-started') {
+          arUi.style.display = 'flex'; // AR-Overlay anzeigen
+        } else if (e.detail.status === 'not-presenting') {
+          // AR beendet (durch Benutzer oder System)
+          arUi.style.display = 'none';
+          poster.style.display = 'flex'; // Poster wieder anzeigen
+        }
+      });
+
+      // 2. Close AR-Button
+      closeArBtn.addEventListener('click', () => {
+        try {
+          if (mv.isArActive && typeof mv.stopAr === 'function') mv.stopAr(); // AR beenden
+        } catch(_) {}
+        arUi.style.display = 'none';
+        poster.style.display = 'flex'; // Poster wieder anzeigen
+      });
+
+      // 3. Capture-Button (Screenshot)
+      captureButton.addEventListener('click', () => {
+        const canvas = mv.shadowRoot?.querySelector('canvas') || document.querySelector('canvas');
+        if (!canvas) { console.warn('Kein Canvas für Screenshot gefunden'); return; }
+        canvas.toBlob(blob => {
+          if (!blob) return;
+          const a = document.createElement('a');
+          a.download = 'area-ar-' + Date.now().toString(36) + '.png';
+          a.href = URL.createObjectURL(blob);
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(a.href);
+        }, 'image/png');
+      });
+    } else {
+      console.warn('[area-viewer] AR-UI Elemente (ar-ui, captureButton, closeArBtn) fehlen im HTML. Screenshot/AR-Beenden deaktiviert.');
+    }
+
+
+    // --------- AR-Start über Poster-Button AKTUALISIERT ---------
+    startBtn.addEventListener('click', async (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+
+      if (!mv.hasAttribute('ar')) {
+        showError('AR ist für diese Szene nicht aktiviert.');
+        return;
+      }
+
+      startBtn.disabled = true;
+
+      try {
+        if (typeof mv.activateAR === 'function') {
+          await mv.activateAR();
+        } else if (typeof mv.enterAR === 'function') {
+          await mv.enterAR();
+        } else {
+          throw new Error('AR wird von diesem Browser nicht unterstützt.');
+        }
+
+        // ✅ WICHTIG: Poster erst nach erfolgreicher AR-Aktivierung ausblenden
+        poster.style.display = 'none';
+
+      } catch (e) {
+        showError('AR konnte nicht gestartet werden: ' + e.message);
+        console.error('[area-viewer] AR start error', e);
+        poster.style.display = 'flex';
+      } finally {
+        startBtn.disabled = false;
+      }
+    });
+
+  })();
+  </script>
+</body>
+</html>
