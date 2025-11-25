@@ -134,6 +134,7 @@
 
   <script type="module">
   (() => {
+    const poster = document.getElementById('poster');   poster.style.display = 'flex';
     const qs = new URLSearchParams(location.search);
     const devParam = qs.get('dev');
     const DEV = qs.has('dev') && (devParam === null || devParam === '' || devParam === '1' || devParam === 'true');
